@@ -1,11 +1,19 @@
 import { test, expect } from '@playwright/test'
-import { PDFDocument, PDFName, degrees, rgb } from 'pdf-lib'
+import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { readFile } from 'node:fs/promises'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+
+async function extractedText(data: Uint8Array) {
+  const loading = getDocument({ data: new Uint8Array(data) }), pdf = await loading.promise
+  try { const content = await (await pdf.getPage(1)).getTextContent(); return content.items.map(item => 'str' in item ? item.str : '').join(' ') }
+  finally { await loading.destroy() }
+}
 
 test('Startseite: flaches Neon-Design und mobile Ansicht ohne Überlauf', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'DEIN PDF. DEINE REGELN.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'PDF öffnen' })).toBeVisible()
+  await expect(page.locator('.intro, .benefits, footer, .little-guide')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Herunterladen' })).toBeDisabled()
   await expect(page.locator('.editor')).toHaveCSS('border-radius', '0px')
   await expect(page.locator('.button-primary').first()).toHaveCSS('background-color', 'rgb(29, 40, 18)')
@@ -20,9 +28,10 @@ test('Startseite: flaches Neon-Design und mobile Ansicht ohne Überlauf', async 
 test('Beispiel: Text, Markierung, Zeichnung, Rückgängig und echter PDF-Download', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
   await page.goto('/')
-  await page.getByRole('button', { name: /TESTDOKUMENT LADEN/ }).click()
+  await page.getByRole('button', { name: /Testdokument laden/ }).click()
   await expect(page.locator('.pdf-surface canvas')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Seite 2', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Text hinzufügen', exact: true }).click()
   await page.locator('.pdf-surface').click({ position: { x: 65, y: 340 } })
   await expect(page.getByRole('textbox', { name: 'Dein Text', exact: true })).toBeVisible()
   await page.getByRole('textbox', { name: 'Dein Text', exact: true }).fill('Geändert — äöü ✓')
@@ -49,7 +58,7 @@ test('Beispiel: Text, Markierung, Zeichnung, Rückgängig und echter PDF-Downloa
   await expect(page.locator('.annotation-layer image')).toHaveCount(1)
   await page.screenshot({ path: 'test-results/editor.png', fullPage: true })
   const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
-  const download = await downloaded; expect(download.suggestedFilename()).toBe('Ein bisschen Freiraum-bearbeitet.pdf')
+  const download = await downloaded; expect(download.suggestedFilename()).toBe('Beispieldokument-bearbeitet.pdf')
   const data = await readFile((await download.path())!), doc = await PDFDocument.load(data)
   expect(doc.getPageCount()).toBe(2)
   expect(doc.getPage(0).node.Resources()?.lookup(PDFName.of('XObject'))).toBeTruthy()
@@ -71,7 +80,7 @@ for (const angle of [0, 90, 180, 270]) {
     await page.locator('input[type=file]').first().setInputFiles({ name: 'export.pdf', mimeType: 'application/pdf', buffer: await readFile((await download.path())!) })
     await page.getByRole('dialog').getByRole('button', { name: 'PDF wechseln' }).click()
     await expect(page.locator('.document-name strong')).toHaveText('export.pdf')
-    await expect(page.locator('.annotation-layer rect')).toHaveCount(0)
+    await expect(page.locator('.annotation-layer g')).toHaveCount(0)
     await expect.poll(async () => page.locator('.pdf-surface canvas').evaluate((c: HTMLCanvasElement) => {
       const ctx = c.getContext('2d')!, pixel = ctx.getImageData(Math.floor(60 * c.width / c.clientWidth), Math.floor(45 * c.height / c.clientHeight), 1, 1).data
       return pixel[1]! > 245 && pixel[2]! > 160 && pixel[2]! < 220
@@ -84,7 +93,7 @@ test('Ungültige Dateien, Seitenverwaltung und Dokumentwechsel', async ({ page }
   await page.locator('input[type=file]').first().setInputFiles({ name: 'kaputt.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a pdf') })
   await expect(page.getByRole('alert')).toContainText('konnte nicht geöffnet')
   await page.getByRole('button', { name: 'Fehler schließen' }).click()
-  await page.getByRole('button', { name: /TESTDOKUMENT LADEN/ }).click()
+  await page.getByRole('button', { name: /Testdokument laden/ }).click()
   await page.getByRole('button', { name: 'Seite 2', exact: true }).click()
   await page.getByRole('button', { name: 'Seite nach vorne', exact: true }).click()
   await page.getByRole('button', { name: 'Seite löschen', exact: true }).click()
@@ -96,4 +105,73 @@ test('Ungültige Dateien, Seitenverwaltung und Dokumentwechsel', async ({ page }
   await expect(page.getByRole('button', { name: 'Nächste Seite', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
   await page.screenshot({ path: 'test-results/mobile-editor.png', fullPage: true })
+})
+
+test('Vorhandenen Text ersetzen: Original entfernt, neuer Text suchbar, Undo und Unicode', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
+  const doc = await PDFDocument.create(), p = doc.addPage([500, 600]), font = await doc.embedFont(StandardFonts.Helvetica)
+  p.drawRectangle({ x: 40, y: 400, width: 400, height: 100, color: rgb(.8, .9, 1) })
+  p.drawText('Alter Vertragstext', { x: 60, y: 460, size: 18, font })
+  p.drawText('Diese Zeile bleibt erhalten.', { x: 60, y: 370, size: 14, font })
+  await page.goto('/')
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'vertrag.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await doc.save()) })
+  await page.getByRole('button', { name: 'Text bearbeiten: Alter Vertragstext', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Vorhandener Text', exact: true }).fill('Neuer Vertragstext λ\nZweite Zeile')
+  await page.getByRole('button', { name: 'Übernehmen', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toHaveCount(0, { timeout: 20000 })
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Rückgängig', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Text bearbeiten: Alter Vertragstext', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Wiederholen', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toHaveCount(0, { timeout: 20000 })
+  await page.screenshot({ path: 'test-results/existing-text.png', fullPage: true })
+  const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
+  const data = await readFile((await (await downloaded).path())!), content = await extractedText(data)
+  expect(content).toContain('Neuer Vertragstext λ')
+  expect(content).toContain('Zweite Zeile')
+  expect(content).not.toContain('Alter Vertragstext')
+  expect(content).toContain('Diese Zeile bleibt erhalten.')
+  // The coloured background stays a vector object; no opaque cover replaces the old text.
+  expect((await PDFDocument.load(data)).getPageCount()).toBe(1)
+  expect(errors).toEqual([])
+})
+
+for (const angle of [90, 180, 270]) {
+  test(`Vorhandenen Text auf gedrehter ${angle}°-Seite mit CropBox bearbeiten`, async ({ page }) => {
+    const doc = await PDFDocument.create(), p = doc.addPage([500, 650])
+    p.setCropBox(50, 30, 300, 400); p.setRotation(degrees(angle))
+    p.drawText('Vorhandener Text', { x: 90, y: 200, size: 14 })
+    await page.goto('/')
+    await page.locator('input[type=file]').first().setInputFiles({ name: 'rotation-text.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await doc.save()) })
+    await page.getByRole('button', { name: 'Text bearbeiten: Vorhandener Text', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Vorhandener Text', exact: true }).fill('Text nach Bearbeitung')
+    await page.getByRole('button', { name: 'Übernehmen', exact: true }).click()
+    await expect(page.locator('.busy-overlay')).toHaveCount(0, { timeout: 20000 })
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
+    const data = await readFile((await (await downloaded).path())!), content = await extractedText(data)
+    expect(content).toContain('Text nach Bearbeitung'); expect(content).not.toContain('Vorhandener Text')
+    expect((await PDFDocument.load(data)).getPage(0).getRotation().angle).toBe(angle)
+  })
+}
+
+test('Text in einer eingebetteten PDF-Seite ersetzen und weiteren Text löschen', async ({ page }) => {
+  const source = await PDFDocument.create(), inner = source.addPage([400, 500])
+  inner.drawText('Text im Formularobjekt', { x: 40, y: 400, size: 18 })
+  inner.drawText('Diese Zeile entfernen', { x: 40, y: 350, size: 14 })
+  const doc = await PDFDocument.create(), p = doc.addPage([600, 700]), embedded = await doc.embedPage(inner)
+  p.drawPage(embedded, { x: 60, y: 70, width: 440, height: 550 })
+  await page.goto('/')
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'eingebettet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await doc.save()) })
+  await page.getByRole('button', { name: 'Text bearbeiten: Text im Formularobjekt', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Vorhandener Text', exact: true }).fill('Formulartext ersetzt')
+  await page.getByRole('button', { name: 'Übernehmen', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toHaveCount(0, { timeout: 20000 })
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Text bearbeiten: Diese Zeile entfernen', exact: true }).click()
+  await page.getByRole('button', { name: 'Text löschen', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toHaveCount(0, { timeout: 20000 })
+  const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
+  const content = await extractedText(await readFile((await (await downloaded).path())!))
+  expect(content).toContain('Formulartext ersetzt'); expect(content).not.toContain('Text im Formularobjekt'); expect(content).not.toContain('Diese Zeile entfernen')
 })
