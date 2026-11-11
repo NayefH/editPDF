@@ -1,0 +1,275 @@
+import { useEffect, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent, CSSProperties } from 'react'
+import { ArrowDown, ArrowDownToLine, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCheck, ChevronDown, CircleHelp, FileCheck2, FilePlus2, FileText, Highlighter, ImagePlus, LayoutGrid, LoaderCircle, LockKeyhole, Maximize, Minus, MousePointer2, Pencil, Plus, Redo2, ShieldCheck, Sparkles, Square, Trash2, Type, Undo2, Upload, X, Zap } from 'lucide-react'
+import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
+import * as pdfjs from 'pdfjs-dist'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import './App.css'
+
+pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+type Tool = 'select' | 'text' | 'highlight' | 'draw' | 'rectangle' | 'image'
+type Point = { x: number; y: number }
+type Mark = { id: string; type: Tool; x: number; y: number; w: number; h: number; color: string; size: number; text?: string; points?: Point[]; image?: string }
+type PageState = { id: string; source: number; marks: Mark[] }
+type Snapshot = PageState[]
+const tools = [
+  { id: 'select', name: 'Auswählen', icon: MousePointer2, hint: 'Klicke auf ein Element, um es auszuwählen oder zu verschieben.' },
+  { id: 'text', name: 'Text', icon: Type, hint: 'Klicke auf die Seite, um einen neuen Text hinzuzufügen.' },
+  { id: 'highlight', name: 'Markieren', icon: Highlighter, hint: 'Ziehe über einen Bereich, um ihn farbig hervorzuheben.' },
+  { id: 'draw', name: 'Zeichnen', icon: Pencil, hint: 'Zeichne mit der Maus oder deinem Stift direkt auf dem Dokument.' },
+  { id: 'rectangle', name: 'Formen', icon: Square, hint: 'Ziehe auf der Seite, um ein Rechteck zu zeichnen.' },
+  { id: 'image', name: 'Bild', icon: ImagePlus, hint: 'Wähle ein Bild und klicke auf die gewünschte Position im Dokument.' },
+] as const
+const colors = ['#111111', '#bcff00', '#00bcff', '#00b980', '#f0bf00', '#ff4b8b']
+const uid = () => crypto.randomUUID()
+
+function PDFCanvas({ pdf, page, width }: { pdf: PDFDocumentProxy; page: number; width: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    let render: ReturnType<pdfjs.PDFPageProxy['render']> | undefined
+    void pdf.getPage(page + 1).then(async p => {
+      if (cancelled || !canvasRef.current) return
+      const base = p.getViewport({ scale: 1 })
+      const viewport = p.getViewport({ scale: width / base.width })
+      const canvas = canvasRef.current
+      const ratio = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width = Math.ceil(viewport.width * ratio); canvas.height = Math.ceil(viewport.height * ratio)
+      canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`
+      render = p.render({ canvas, viewport, transform: [ratio, 0, 0, ratio, 0, 0] })
+      await render.promise
+    }).catch((e: Error) => { if (!cancelled && e.name !== 'RenderingCancelledException') setError(true) })
+    return () => { cancelled = true; render?.cancel() }
+  }, [pdf, page, width])
+  return error ? <span className="render-error">Vorschau nicht verfügbar</span> : <canvas ref={canvasRef} />
+}
+
+function App() {
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
+  const [bytes, setBytes] = useState<Uint8Array | null>(null)
+  const [fileName, setFileName] = useState('')
+  const [fileSize, setFileSize] = useState(0)
+  const [pages, setPages] = useState<PageState[]>([])
+  const [activePage, setActivePage] = useState(0)
+  const [tool, setTool] = useState<Tool>('text')
+  const [color, setColor] = useState(colors[0]!)
+  const [size, setSize] = useState(18)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(85)
+  const [history, setHistory] = useState<Snapshot[]>([])
+  const [future, setFuture] = useState<Snapshot[]>([])
+  const [busy, setBusy] = useState('')
+  const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const [help, setHelp] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [image, setImage] = useState<string | null>(null)
+  const [imageRatio, setImageRatio] = useState(1.5)
+  const [draft, setDraft] = useState<Mark | null>(null)
+  const [pageDims, setPageDims] = useState({ width: 595, height: 842 })
+  const fileRef = useRef<HTMLInputElement>(null)
+  const imageRef = useRef<HTMLInputElement>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const gesture = useRef<{ start: Point; mark: Mark; moving?: boolean } | null>(null)
+  const draftRef = useRef<Mark | null>(null)
+  const pdfRef = useRef(pdf)
+  pdfRef.current = pdf
+  const current = pages[activePage]
+  const selectedMark = current?.marks.find(m => m.id === selected)
+  const activeTool = tools.find(t => t.id === tool)!
+  const edited = history.length > 0
+  const displayWidth = pageDims.width * zoom / 100
+  const displayHeight = pageDims.height * zoom / 100
+
+  useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer) }, [notice])
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (edited) event.preventDefault() }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [edited])
+  useEffect(() => () => { void pdfRef.current?.loadingTask.destroy() }, [])
+  useEffect(() => { setSelected(null); setDraft(null); draftRef.current = null; gesture.current = null }, [activePage])
+  useEffect(() => {
+    if (!pdf || !current) return
+    let cancelled = false
+    void pdf.getPage(current.source + 1).then(p => { const v = p.getViewport({ scale: 1 }); if (!cancelled) setPageDims({ width: v.width, height: v.height }) })
+    return () => { cancelled = true }
+  }, [pdf, current?.source])
+
+  function commit(next: Snapshot) { setHistory(h => [...h.slice(-39), pages]); setFuture([]); setPages(next) }
+  function undo() {
+    if (!history.length) return
+    setFuture(f => [pages, ...f]); setPages(history[history.length - 1]!); setHistory(h => h.slice(0, -1)); setSelected(null)
+    setActivePage(p => Math.min(p, history[history.length - 1]!.length - 1))
+  }
+  function redo() { if (!future.length) return; setHistory(h => [...h, pages]); setPages(future[0]!); setFuture(f => f.slice(1)); setSelected(null) }
+  function updateMark(id: string, patch: Partial<Mark>) { commit(pages.map((p, i) => i === activePage ? { ...p, marks: p.marks.map(m => m.id === id ? { ...m, ...patch } : m) } : p)) }
+  function removeMark() { if (!selected) return; commit(pages.map((p, i) => i === activePage ? { ...p, marks: p.marks.filter(m => m.id !== selected) } : p)); setSelected(null) }
+  async function loadFile(file: File, confirmed = false) {
+    if (!file.name.toLowerCase().endsWith('.pdf')) { setError('Bitte wähle eine PDF-Datei aus.'); return }
+    if (file.size > 50 * 1024 * 1024) { setError('Die PDF darf maximal 50 MB groß sein.'); return }
+    if (edited && !confirmed) { setPendingFile(file); return }
+    setBusy('Deine PDF wird geöffnet …'); setError('')
+    let loaded: PDFDocumentProxy | null = null
+    try {
+      const data = new Uint8Array(await file.arrayBuffer())
+      await PDFDocument.load(data)
+      loaded = await pdfjs.getDocument({ data: data.slice(), cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' }).promise
+      if (!loaded.numPages) throw new Error('empty')
+      const first = await loaded.getPage(1); const viewport = first.getViewport({ scale: 1 })
+      void pdf?.loadingTask.destroy()
+      setPdf(loaded); setBytes(data); setFileName(file.name); setFileSize(file.size)
+      setPages(Array.from({ length: loaded.numPages }, (_, i) => ({ id: uid(), source: i, marks: [] })))
+      setPageDims({ width: viewport.width, height: viewport.height }); setActivePage(0); setHistory([]); setFuture([]); setSelected(null)
+      setZoom(window.innerWidth < 700 ? Math.max(25, Math.floor((window.innerWidth - 80) / viewport.width * 100)) : 85)
+      setNotice('PDF GELADEN. DU BIST DRAN.')
+    } catch (e) {
+      if (loaded) void loaded.loadingTask.destroy()
+      setError(e instanceof Error && /encrypt|password/i.test(e.message) ? 'Diese PDF ist passwortgeschützt. Bitte entferne zuerst den Passwortschutz.' : 'Diese PDF konnte nicht geöffnet werden. Bitte prüfe, ob die Datei vollständig und gültig ist.')
+    } finally { setBusy(''); if (fileRef.current) fileRef.current.value = '' }
+  }
+  async function loadDemo() {
+    const doc = await PDFDocument.create(); const font = await doc.embedFont(StandardFonts.Helvetica); const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+    for (let i = 0; i < 2; i++) {
+      const page = doc.addPage([595.28, 841.89])
+      page.drawText('EDIT//PDF — TESTDOKUMENT', { x: 55, y: 775, size: 11, font: bold, color: rgb(.46, .36, .7) })
+      page.drawText(i === 0 ? 'Gute Ideen brauchen' : 'Platz für deine Ideen.', { x: 55, y: 680, size: 32, font: bold, color: rgb(.18, .16, .23) })
+      if (i === 0) page.drawText('ein bisschen Freiraum.', { x: 55, y: 636, size: 32, font: bold, color: rgb(.18, .16, .23) })
+      page.drawText(i === 0 ? 'Dein erstes Dokument. Deine Möglichkeiten.' : 'Notizen, Gedanken & nächste Schritte', { x: 55, y: 575, size: 14, font })
+      page.drawRectangle({ x: 55, y: 470, width: 485, height: 65, color: rgb(.95, .93, .98) })
+      page.drawText('Mach dieses Dokument zu deinem.', { x: 75, y: 495, size: 16, font: bold, color: rgb(.46, .36, .7) })
+      const lines = i === 0 ? ['01    Ergänze Text an einer beliebigen Stelle.', '02    Hebe wichtige Gedanken mit dem Marker hervor.', '03    Zeichne, füge Bilder hinzu und probiere dich aus.', '04    Lade dein fertiges Dokument als PDF herunter.'] : ['Was möchtest du festhalten?', '', 'Hier ist Raum für deine nächsten großen Ideen.', '', 'Klicke auf die Seite und lege einfach los.']
+      lines.forEach((line, n) => page.drawText(line, { x: 55, y: 410 - n * 38, size: 12, font, color: rgb(.4, .38, .44) }))
+      page.drawLine({ start: { x: 55, y: 78 }, end: { x: 540, y: 78 }, thickness: .5, color: rgb(.85, .83, .88) })
+      page.drawText('Ein kleines Beispiel. Viele Möglichkeiten.', { x: 55, y: 55, size: 9, font, color: rgb(.5, .48, .55) }); page.drawText(`0${i + 1}`, { x: 525, y: 55, size: 9, font })
+    }
+    const data = await doc.save(); await loadFile(new File([data as BlobPart], 'Ein bisschen Freiraum.pdf', { type: 'application/pdf' }))
+  }
+  function point(event: ReactPointerEvent): Point { const rect = surfaceRef.current!.getBoundingClientRect(); return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) } }
+  function setLive(mark: Mark | null) { draftRef.current = mark; setDraft(mark) }
+  function pointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!current || event.button !== 0) return
+    const pos = point(event)
+    if (tool === 'select') { setSelected(null); return }
+    if (tool === 'image' && !image) { imageRef.current?.click(); return }
+    const mark: Mark = { id: uid(), type: tool, ...pos, w: tool === 'image' ? .3 : .001, h: tool === 'image' ? .2 : .001, color, size, text: tool === 'text' ? 'Dein Text' : undefined, points: tool === 'draw' ? [pos] : undefined, image: tool === 'image' ? image! : undefined }
+    if (tool === 'text' || tool === 'image') {
+      if (tool === 'image') {
+        mark.w = Math.min(.3, 1 - pos.x)
+        mark.h = mark.w * pageDims.width / imageRatio / pageDims.height
+        if (mark.h > 1 - pos.y) { mark.h = 1 - pos.y; mark.w = mark.h * pageDims.height * imageRatio / pageDims.width }
+      }
+      commit(pages.map((p, i) => i === activePage ? { ...p, marks: [...p.marks, mark] } : p)); setSelected(mark.id); setTool('select'); return
+    }
+    event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { start: pos, mark }; setSelected(null); setLive(mark)
+  }
+  function pointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!gesture.current) return
+    const pos = point(event), { start, mark, moving } = gesture.current
+    if (moving) setLive({ ...mark, x: Math.max(0, Math.min(1 - mark.w, mark.x + pos.x - start.x)), y: Math.max(0, Math.min(1 - mark.h, mark.y + pos.y - start.y)), points: mark.points?.map(p => ({ x: p.x + pos.x - start.x, y: p.y + pos.y - start.y })) })
+    else if (mark.type === 'draw') setLive({ ...mark, points: [...(draftRef.current?.points ?? [start]), pos] })
+    else setLive({ ...mark, x: Math.min(start.x, pos.x), y: Math.min(start.y, pos.y), w: Math.abs(pos.x - start.x), h: Math.abs(pos.y - start.y) })
+  }
+  function pointerUp() {
+    const next = draftRef.current
+    if (!next || !gesture.current) { gesture.current = null; setLive(null); return }
+    const moving = gesture.current.moving
+    if (moving || next.type === 'draw' || (next.w > .004 && next.h > .004)) { commit(pages.map((p, i) => i === activePage ? { ...p, marks: moving ? p.marks.map(m => m.id === next.id ? next : m) : [...p.marks, next] } : p)); setSelected(next.id) }
+    gesture.current = null; setLive(null)
+  }
+  function selectMark(event: ReactPointerEvent<SVGElement>, mark: Mark) {
+    if (tool !== 'select') return
+    event.stopPropagation(); setSelected(mark.id); surfaceRef.current?.setPointerCapture(event.pointerId); gesture.current = { start: point(event), mark, moving: true }
+  }
+  async function readImage(file?: File) {
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { setError('Bitte wähle ein PNG-, JPG- oder WebP-Bild.'); return }
+    if (file.size > 10 * 1024 * 1024) { setError('Das Bild darf maximal 10 MB groß sein.'); return }
+    const reader = new FileReader()
+    reader.onload = async () => {
+      try {
+        const src = reader.result as string, img = new Image(); img.src = src; await img.decode()
+        setImageRatio(img.naturalWidth / img.naturalHeight); setImage(src); setTool('image'); setNotice('Klicke auf die Seite, um dein Bild einzufügen.')
+      } catch { setError('Das Bild konnte nicht geöffnet werden. Bitte wähle eine andere Datei.') }
+    }
+    reader.onerror = () => setError('Das Bild konnte nicht gelesen werden.')
+    reader.readAsDataURL(file)
+    if (imageRef.current) imageRef.current.value = ''
+  }
+  async function download() {
+    if (!bytes || !pdf) return
+    setBusy('Deine PDF wird vorbereitet …'); setError('')
+    try {
+      const source = await PDFDocument.load(bytes), output = await PDFDocument.create()
+      for (const state of pages) {
+        const [copy] = await output.copyPages(source, [state.source]); output.addPage(copy!)
+        if (!state.marks.length) continue
+        const original = await pdf.getPage(state.source + 1), viewport = original.getViewport({ scale: 1 })
+        const canvas = document.createElement('canvas'), factor = 2
+        canvas.width = Math.ceil(viewport.width * factor); canvas.height = Math.ceil(viewport.height * factor)
+        const ctx = canvas.getContext('2d')!; ctx.scale(factor, factor)
+        for (const mark of state.marks) {
+          const x = mark.x * viewport.width, y = mark.y * viewport.height, w = mark.w * viewport.width, h = mark.h * viewport.height
+          ctx.save(); ctx.fillStyle = mark.color; ctx.strokeStyle = mark.color; ctx.lineWidth = mark.type === 'draw' ? Math.max(1, mark.size / 6) : 1.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+          if (mark.type === 'text') { ctx.font = `${mark.size}px Arial, sans-serif`; ctx.textBaseline = 'top'; (mark.text ?? '').split('\n').forEach((line, index) => ctx.fillText(line, x, y + index * mark.size * 1.3)) }
+          if (mark.type === 'highlight') { ctx.globalAlpha = .3; ctx.fillRect(x, y, w, h) }
+          if (mark.type === 'rectangle') ctx.strokeRect(x, y, w, h)
+          if (mark.type === 'draw' && mark.points) { ctx.beginPath(); mark.points.forEach((p, i) => { if (!i) ctx.moveTo(p.x * viewport.width, p.y * viewport.height); else ctx.lineTo(p.x * viewport.width, p.y * viewport.height) }); ctx.stroke() }
+          if (mark.type === 'image' && mark.image) { const img = new Image(); img.src = mark.image; await img.decode(); ctx.drawImage(img, x, y, w, h) }
+          ctx.restore()
+        }
+        const overlay = await output.embedPng(canvas.toDataURL('image/png')), [x, y] = viewport.convertToPdfPoint(0, viewport.height)
+        copy!.drawImage(overlay, { x, y, width: viewport.width, height: viewport.height, rotate: degrees(original.rotate) })
+      }
+      output.setTitle(fileName.replace(/\.pdf$/i, '')); output.setCreator('EDIT//PDF')
+      const result = await output.save(), url = URL.createObjectURL(new Blob([result as BlobPart], { type: 'application/pdf' }))
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName.replace(/\.pdf$/i, '') + '-bearbeitet.pdf'; anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10000); setNotice('Fertig! Deine bearbeitete PDF wurde heruntergeladen.')
+    } catch { setError('Die PDF konnte nicht exportiert werden. Bitte versuche es erneut. Dein Dokument bleibt geöffnet.') } finally { setBusy('') }
+  }
+  function movePage(direction: number) { const target = activePage + direction; if (target < 0 || target >= pages.length) return; const next = [...pages]; [next[activePage], next[target]] = [next[target]!, next[activePage]!]; commit(next); setActivePage(target) }
+  function chooseTool(next: Tool) { setTool(next); setSelected(null); if (next === 'highlight') setColor('#bcff00'); if (next === 'image' && pdf) imageRef.current?.click() }
+  const marks = [...(current?.marks.filter(m => m.id !== draft?.id) ?? []), ...(draft ? [draft] : [])]
+
+  return <div className="app-shell">
+    <input ref={fileRef} type="file" accept="application/pdf,.pdf" hidden onChange={e => { const file = e.target.files?.[0]; if (file) void loadFile(file) }} />
+    <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => void readImage(e.target.files?.[0])} />
+    <header className="site-header"><a className="brand" href="./" aria-label="EDIT PDF Startseite"><span className="brand-icon"><FileText size={23} strokeWidth={1.8} /></span>EDIT<span className="brand-dot">//</span>PDF</a><span className="header-divider" /><span className="header-caption">DOKUMENTE UNTER DEINER KONTROLLE</span><nav><span className="private-badge"><span /> LOKAL & PRIVAT</span><button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /> HILFE</button></nav></header>
+    <main>
+      <section className={`intro ${pdf ? 'intro-compact' : ''}`}><div><div className="eyebrow"><span /> PDF-WERKSTATT / OHNE UMWEGE</div><h1>DEIN PDF.<br /><span>DEINE REGELN.</span></h1><p>Hochladen. Verändern. Wieder runterladen.<br className="mobile-break" /> Keine Anmeldung. Keine Datei in irgendeiner Cloud.</p></div><div className="intro-note"><span className="note-spark"><ShieldCheck size={25} strokeWidth={1.5} /></span><span>KEIN CLOUD-KRAM.<br /><b>DEIN DOKUMENT<br />BLEIBT DEINS.</b></span><span className="note-index">[ LOCAL FIRST ]</span></div></section>
+      <section className={`editor ${pdf ? 'has-document' : ''}`} aria-label="PDF-Editor">
+        <div className="editor-topbar"><div className="document-name"><span className="file-icon"><FileText size={18} /></span><div><strong>{fileName || 'KEIN DOKUMENT GELADEN'}</strong><span>{pdf ? `${pages.length} ${pages.length === 1 ? 'Seite' : 'Seiten'} · ${(fileSize / 1024 / 1024).toFixed(2).replace('.', ',')} MB` : 'WARTE AUF EINE PDF_'}</span></div>{pdf && <span className="local-status"><Check size={13} /> Lokal geöffnet</span>}</div><div className="document-actions"><button className="button button-secondary" onClick={() => fileRef.current?.click()} disabled={!!busy}><Upload size={15} /><span>{pdf ? 'PDF wechseln' : 'PDF öffnen'}</span></button><button className="button button-primary download-button" onClick={() => void download()} disabled={!pdf || !!busy}><ArrowDownToLine size={16} /><span>Herunterladen</span></button></div></div>
+        <div className="editor-toolbar"><div className="tool-group">{tools.map(t => <button key={t.id} title={t.name} className={`tool-button ${tool === t.id ? 'active' : ''}`} aria-label={t.name} aria-pressed={tool === t.id} onClick={() => chooseTool(t.id)}><t.icon size={18} strokeWidth={1.7} /><span>{t.name}</span></button>)}</div><div className="history-buttons"><button title="Rückgängig" aria-label="Rückgängig" onClick={undo} disabled={!history.length || !!busy}><Undo2 size={18} /></button><button title="Wiederholen" aria-label="Wiederholen" onClick={redo} disabled={!future.length || !!busy}><Redo2 size={18} /></button></div></div>
+        <div className="editor-body">
+          {pdf && <aside className="pages-sidebar"><div className="sidebar-title"><LayoutGrid size={14} /> Seiten <span>{pages.length}</span></div><div className="thumbnails">{pages.map((p, i) => <button className={`thumbnail ${activePage === i ? 'selected' : ''}`} key={p.id} onClick={() => setActivePage(i)} aria-label={`Seite ${i + 1}`}><div><PDFCanvas pdf={pdf} page={p.source} width={100} />{p.marks.length > 0 && <span className="edited-dot" />}</div><span>{i + 1}</span></button>)}</div><div className="page-actions"><button title="Seite nach vorne" aria-label="Seite nach vorne" onClick={() => movePage(-1)} disabled={activePage === 0 || !!busy}><ArrowUp size={16} /></button><button title="Seite nach hinten" aria-label="Seite nach hinten" onClick={() => movePage(1)} disabled={activePage === pages.length - 1 || !!busy}><ArrowDown size={16} /></button><button title="Seite löschen" aria-label="Seite löschen" disabled={pages.length <= 1 || !!busy} onClick={() => { commit(pages.filter((_, i) => i !== activePage)); setActivePage(Math.max(0, activePage - 1)) }}><Trash2 size={15} /></button></div></aside>}
+          <div className={`workspace ${dragOver ? 'dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!busy) setDragOver(true) }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }} onDrop={e => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file && !busy) void loadFile(file) }}>
+            {!pdf ? <div className="upload-view"><div className="upload-zone"><div className="document-illustration" aria-hidden="true"><div className="illus-back" /><div className="illus-page"><span className="illus-fold" /><div className="illus-badge">PDF</div><span /><span /><span /><div className="illus-highlight" /></div><div className="illus-pencil"><Pencil size={24} /></div><span className="illus-spark s1">✦</span><span className="illus-spark s2">✧</span></div><h2>DATEI REIN. IDEEN RAUS.</h2><p>Ziehe deine PDF hierher oder wähle eine Datei aus.</p><button className="button button-primary upload-button" disabled={!!busy} onClick={() => fileRef.current?.click()}><Plus size={18} /> PDF auswählen <ArrowUpRight size={16} /></button><span className="upload-limit">PDF-Dateien bis 50 MB</span><div className="upload-privacy"><LockKeyhole size={13} /> Bleibt in deinem Browser. Versprochen.</div></div><button className="demo-button" disabled={!!busy} onClick={() => void loadDemo()}><FileText size={15} /> KEINE PDF ZUR HAND? <span>TESTDOKUMENT LADEN <ArrowRight size={13} /></span></button></div> : <div className="page-scroll"><div className="page-label"><button aria-label="Vorherige Seite" disabled={activePage === 0} onClick={() => setActivePage(p => p - 1)}>‹</button> SEITE {activePage + 1} <span>/{pages.length}</span> <button aria-label="Nächste Seite" disabled={activePage === pages.length - 1} onClick={() => setActivePage(p => p + 1)}>›</button></div><div className={`pdf-surface cursor-${tool}`} ref={surfaceRef} style={{ width: displayWidth, height: displayHeight }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { gesture.current = null; setLive(null) }}><PDFCanvas pdf={pdf} page={current!.source} width={displayWidth} /><svg className="annotation-layer" viewBox={`0 0 ${pageDims.width} ${pageDims.height}`} aria-label="PDF-Bearbeitungen">{marks.map(m => {
+              const x = m.x * pageDims.width, y = m.y * pageDims.height, w = m.w * pageDims.width, h = m.h * pageDims.height
+              const common = { onPointerDown: (e: ReactPointerEvent<SVGElement>) => selectMark(e, m), style: { pointerEvents: tool === 'select' ? 'auto' as const : 'none' as const, cursor: 'move' } }
+              return <g key={m.id}>{m.type === 'text' && <text {...common} x={x} y={y} fill={m.color} fontSize={m.size} fontFamily="Arial, sans-serif" dominantBaseline="text-before-edge">{(m.text ?? '').split('\n').map((line, i) => <tspan key={i} x={x} dy={i ? m.size * 1.3 : 0}>{line || ' '}</tspan>)}</text>}{m.type === 'highlight' && <rect {...common} x={x} y={y} width={w} height={h} fill={m.color} fillOpacity={.3} />}{m.type === 'rectangle' && <rect {...common} x={x} y={y} width={w} height={h} fill="transparent" stroke={m.color} strokeWidth={1.5} />}{m.type === 'draw' && <polyline {...common} points={m.points?.map(p => `${p.x * pageDims.width},${p.y * pageDims.height}`).join(' ')} fill="none" stroke={m.color} strokeWidth={Math.max(1, m.size / 6)} strokeLinecap="round" strokeLinejoin="round" />}{m.type === 'image' && <image {...common} x={x} y={y} width={w} height={h} href={m.image} preserveAspectRatio="none" />}{selected === m.id && m.type !== 'draw' && <rect x={x - 3} y={y - 3} width={m.type === 'text' ? Math.max(...(m.text ?? '').split('\n').map(l => l.length), 3) * m.size * .58 + 6 : w + 6} height={m.type === 'text' ? (m.text ?? '').split('\n').length * m.size * 1.3 + 6 : h + 6} fill="none" stroke="#659000" strokeWidth={1} strokeDasharray="4 3" pointerEvents="none" />}</g>
+            })}</svg></div><div className="page-bottom-hint"><MousePointer2 size={13} />{activeTool.hint}</div></div>}
+            {busy && <div className="busy-overlay" role="status"><LoaderCircle size={28} className="spin" /><strong>{busy}</strong><span>Einen kleinen Moment.</span></div>}{dragOver && <div className="drop-overlay"><Upload size={32} /><strong>PDF hier ablegen</strong></div>}
+          </div>
+          <aside className="properties-sidebar"><div className="sidebar-title"><span className="tiny-spark">✧</span> WERKZEUGE // CONFIG</div><div className="properties-content"><div className="property-tool"><span><activeTool.icon size={20} /></span><div><h3>{selectedMark ? 'Element bearbeiten' : tool === 'text' ? 'Text hinzufügen' : activeTool.name}</h3><p>{selectedMark ? 'Gib deinem Element den Feinschliff.' : tool === 'text' ? 'Deine Worte. An der richtigen Stelle.' : 'Kleine Details machen den Unterschied.'}</p></div></div>
+            {selectedMark?.type === 'text' && <label className="property-field">Dein Text<textarea key={`${selectedMark.id}-${selectedMark.text}`} defaultValue={selectedMark.text} onBlur={e => { if (e.target.value !== selectedMark.text) updateMark(selectedMark.id, { text: e.target.value }) }} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) e.currentTarget.blur() }} placeholder="Schreibe etwas …" rows={3} /></label>}
+            <div className="property-field"><label>Farbe</label><div className="color-options">{colors.map(c => <button key={c} style={{ '--swatch': c } as CSSProperties} className={`color-swatch ${(selectedMark?.color ?? color) === c ? 'chosen' : ''}`} aria-label={`Farbe ${c}`} aria-pressed={(selectedMark?.color ?? color) === c} onClick={() => { setColor(c); if (selectedMark) updateMark(selectedMark.id, { color: c }) }}>{(selectedMark?.color ?? color) === c && <Check size={12} />}</button>)}<label className="custom-color" title="Eigene Farbe"><Plus size={13} /><input type="color" value={selectedMark?.color ?? color} aria-label="Eigene Farbe" onChange={e => { setColor(e.target.value); if (selectedMark) updateMark(selectedMark.id, { color: e.target.value }) }} /></label></div></div>
+            <div className="property-field"><label htmlFor="text-size">{tool === 'draw' || selectedMark?.type === 'draw' ? 'Strichstärke' : 'Schriftgröße'}</label><div className="size-control"><span>{tool === 'draw' ? <Pencil size={14} /> : <Type size={15} />}</span><select id="text-size" value={selectedMark?.size ?? size} onChange={e => { setSize(Number(e.target.value)); if (selectedMark) updateMark(selectedMark.id, { size: Number(e.target.value) }) }}>{[10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64].map(n => <option key={n} value={n}>{n}</option>)}</select><span>pt</span><ChevronDown size={13} /></div></div>
+            {selectedMark?.type === 'image' && <div className="property-field"><label>Bildbreite</label><input type="range" min="5" max="90" value={selectedMark.w * 100} aria-label="Bildbreite" onChange={e => { const w = Number(e.target.value) / 100; updateMark(selectedMark.id, { w, h: selectedMark.h * w / selectedMark.w }) }} /></div>}
+            {selectedMark && <button className="remove-element" onClick={removeMark}><Trash2 size={14} />Element entfernen</button>}<div className="tool-tip"><span><MousePointer2 size={15} /></span><p>{pdf ? activeTool.hint : 'Öffne zuerst deine PDF. Wähle dann ein Werkzeug und leg los.'}</p></div><div className="properties-divider" /><div className="little-guide"><span>SO EINFACH GEHT’S</span><div><span className={!pdf ? 'step-number current' : 'step-number done'}>{pdf ? <Check size={12} /> : '1'}</span><p>PDF auswählen<small>Dein Dokument, dein Startpunkt.</small></p></div><div><span className={pdf ? 'step-number current' : 'step-number'}>2</span><p>Einfach bearbeiten<small>Mit den Werkzeugen oben.</small></p></div><div><span className="step-number">3</span><p>Fertig? Herunterladen.<small>Und weiter geht’s.</small></p></div></div></div><div className="sidebar-foot"><ShieldCheck size={16} /><span>DATEI BLEIBT LOKAL.<small>Deine Dateien verlassen dieses Gerät nicht.</small></span></div></aside>
+        </div>
+        <div className="editor-statusbar"><span><span className="status-dot" />{pdf ? 'Alles passiert lokal in deinem Browser' : 'SYSTEM BEREIT_'}</span><div className="zoom-controls"><button aria-label="Verkleinern" onClick={() => setZoom(z => Math.max(25, z - 10))} disabled={!pdf || zoom <= 25}><Minus size={14} /></button><span>{pdf ? `${zoom} %` : '100 %'}</span><button aria-label="Vergrößern" onClick={() => setZoom(z => Math.min(200, z + 10))} disabled={!pdf || zoom >= 200}><Plus size={14} /></button><span className="zoom-divider" /><button aria-label="Seite einpassen" title="Seite einpassen" disabled={!pdf} onClick={() => { const container = surfaceRef.current?.parentElement?.parentElement; if (container) setZoom(Math.max(25, Math.min(200, Math.floor((container.clientWidth - 72) / pageDims.width * 100)))) }}><Maximize size={14} /></button></div></div>
+      </section>
+      <section className="benefits" aria-label="Deine Vorteile"><div><span className="benefit-icon"><ShieldCheck size={19} strokeWidth={1.6} /></span><p><strong>KEINE CLOUD. KEINE KOPIE.</strong><span>Keine Uploads auf fremde Server.</span></p></div><div><span className="benefit-icon"><Zap size={19} strokeWidth={1.6} /></span><p><strong>KEIN KONTO. KEINE UMWEGE.</strong><span>Direkt loslegen, ohne Anmeldung.</span></p></div><div><span className="benefit-icon"><FileCheck2 size={19} strokeWidth={1.6} /></span><p><strong>DEINE ÄNDERUNGEN. DEIN PDF.</strong><span>Bearbeiten, herunterladen, fertig.</span></p></div></section>
+    </main>
+    <footer><span className="footer-brand">EDIT//PDF</span><span>DEINE DATEIEN. DEIN RECHNER. DEINE SACHE.</span><span>KEIN LOGIN / KEIN UPLOAD <span className="footer-flower">↗</span></span></footer>
+    {notice && <div className="toast" role="status"><CheckCheck size={17} />{notice}<button aria-label="Meldung schließen" onClick={() => setNotice('')}><X size={15} /></button></div>}
+    {error && <div className="error-toast" role="alert"><CircleHelp size={18} /><span>{error}</span><button aria-label="Fehler schließen" onClick={() => setError('')}><X size={16} /></button></div>}
+    {help && <div className="modal-backdrop" onClick={() => setHelp(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="help-heading" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Schließen" onClick={() => setHelp(false)}><X size={20} /></button><span className="modal-icon"><Sparkles size={25} /></span><h2 id="help-heading">KURZANLEITUNG.</h2><p>Öffne eine PDF oder probiere das Beispieldokument aus. Alle Änderungen passieren auf deinem Gerät.</p><ol><li><strong>Ergänzen & markieren</strong><span>Mit „Text“ auf die Seite klicken und rechts den Inhalt ändern. Für Markierungen und Formen einen Bereich aufziehen.</span></li><li><strong>Auswählen & verschieben</strong><span>Mit dem Pfeil eigene Elemente auswählen und ziehen. Farbe und Größe stellst du rechts ein.</span></li><li><strong>Seiten & Download</strong><span>Seiten links auswählen, umsortieren oder löschen. Anschließend die fertige PDF herunterladen.</span></li></ol><div className="help-note">Vorhandene PDF-Texte bleiben erhalten. Du kannst neue Texte und Elemente ergänzen; vorhandene Texte lassen sich hier nicht direkt umschreiben. Änderungen werden erst beim Download in einer neuen Datei gespeichert.</div><button className="button button-primary" onClick={() => setHelp(false)}>Alles klar <Check size={16} /></button></section></div>}
+    {pendingFile && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="replace-heading"><span className="modal-icon"><FilePlus2 size={25} /></span><h2 id="replace-heading">Ein neues Dokument öffnen?</h2><p>Deine aktuellen Änderungen sind noch nicht heruntergeladen. Beim Wechseln werden sie verworfen.</p><div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingFile(null)}>Abbrechen</button><button className="button button-primary" onClick={() => { const next = pendingFile; setPendingFile(null); void loadFile(next, true) }}>PDF wechseln</button></div></section></div>}
+  </div>
+}
+export default App
+

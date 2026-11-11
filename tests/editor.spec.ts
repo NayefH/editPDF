@@ -1,0 +1,99 @@
+import { test, expect } from '@playwright/test'
+import { PDFDocument, PDFName, degrees, rgb } from 'pdf-lib'
+import { readFile } from 'node:fs/promises'
+
+test('Startseite: flaches Neon-Design und mobile Ansicht ohne Überlauf', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'DEIN PDF. DEINE REGELN.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Herunterladen' })).toBeDisabled()
+  await expect(page.locator('.editor')).toHaveCSS('border-radius', '0px')
+  await expect(page.locator('.button-primary').first()).toHaveCSS('background-color', 'rgb(29, 40, 18)')
+  await page.screenshot({ path: 'test-results/desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
+  await expect(page.getByRole('button', { name: 'PDF auswählen' })).toBeVisible()
+  await page.screenshot({ path: 'test-results/mobile.png', fullPage: true })
+  expect(errors).toEqual([])
+})
+
+test('Beispiel: Text, Markierung, Zeichnung, Rückgängig und echter PDF-Download', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
+  await page.goto('/')
+  await page.getByRole('button', { name: /TESTDOKUMENT LADEN/ }).click()
+  await expect(page.locator('.pdf-surface canvas')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Seite 2', exact: true })).toBeVisible()
+  await page.locator('.pdf-surface').click({ position: { x: 65, y: 340 } })
+  await expect(page.getByRole('textbox', { name: 'Dein Text', exact: true })).toBeVisible()
+  await page.getByRole('textbox', { name: 'Dein Text', exact: true }).fill('Geändert — äöü ✓')
+  await page.getByRole('textbox', { name: 'Dein Text', exact: true }).blur()
+  await expect(page.locator('.annotation-layer text')).toHaveText('Geändert — äöü ✓')
+  await page.getByRole('button', { name: 'Markieren', exact: true }).click()
+  const box = (await page.locator('.pdf-surface').boundingBox())!
+  await page.mouse.move(box.x + 45, box.y + 210); await page.mouse.down(); await page.mouse.move(box.x + 230, box.y + 230, { steps: 10 }); await page.mouse.up()
+  await expect(page.locator('.annotation-layer rect[fill-opacity]')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Rückgängig', exact: true }).click()
+  await expect(page.locator('.annotation-layer rect[fill-opacity]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Wiederholen', exact: true }).click()
+  await expect(page.locator('.annotation-layer rect[fill-opacity]')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Zeichnen', exact: true }).click()
+  await page.mouse.move(box.x + 45, box.y + 390); await page.mouse.down(); await page.mouse.move(box.x + 180, box.y + 405, { steps: 15 }); await page.mouse.up()
+  await expect(page.locator('.annotation-layer polyline')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Formen', exact: true }).click()
+  await page.mouse.move(box.x + 250, box.y + 350); await page.mouse.down(); await page.mouse.move(box.x + 330, box.y + 390, { steps: 6 }); await page.mouse.up()
+  await expect(page.locator('.annotation-layer rect[fill="transparent"]')).toHaveCount(1)
+  const image = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 40; c.height = 20; const ctx = c.getContext('2d')!; ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 40, 20); return c.toDataURL('image/png').split(',')[1]! })
+  await page.locator('input[type=file]').nth(1).setInputFiles({ name: 'bild.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') })
+  await expect(page.getByRole('button', { name: 'Bild', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.locator('.pdf-surface').click({ position: { x: 60, y: 440 } })
+  await expect(page.locator('.annotation-layer image')).toHaveCount(1)
+  await page.screenshot({ path: 'test-results/editor.png', fullPage: true })
+  const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
+  const download = await downloaded; expect(download.suggestedFilename()).toBe('Ein bisschen Freiraum-bearbeitet.pdf')
+  const data = await readFile((await download.path())!), doc = await PDFDocument.load(data)
+  expect(doc.getPageCount()).toBe(2)
+  expect(doc.getPage(0).node.Resources()?.lookup(PDFName.of('XObject'))).toBeTruthy()
+  expect(data.byteLength).toBeGreaterThan(5000)
+  expect(errors).toEqual([])
+})
+
+for (const angle of [0, 90, 180, 270]) {
+  test(`PDF mit CropBox und ${angle}°: Markierung bleibt beim Export an derselben Position`, async ({ page }) => {
+    const doc = await PDFDocument.create(), p = doc.addPage([500, 650])
+    p.setCropBox(50, 30, 300, 400); p.setRotation(degrees(angle)); p.drawRectangle({ x: 70, y: 60, width: 30, height: 30, color: rgb(.5, .5, .5) })
+    await page.goto('/')
+    await page.locator('input[type=file]').first().setInputFiles({ name: 'rotation.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await doc.save()) })
+    await expect(page.locator('.pdf-surface canvas')).toBeVisible()
+    await page.getByRole('button', { name: 'Markieren', exact: true }).click()
+    const box = (await page.locator('.pdf-surface').boundingBox())!
+    await page.mouse.move(box.x + 30, box.y + 30); await page.mouse.down(); await page.mouse.move(box.x + 100, box.y + 60, { steps: 8 }); await page.mouse.up()
+    const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click(); const download = await downloaded
+    await page.locator('input[type=file]').first().setInputFiles({ name: 'export.pdf', mimeType: 'application/pdf', buffer: await readFile((await download.path())!) })
+    await page.getByRole('dialog').getByRole('button', { name: 'PDF wechseln' }).click()
+    await expect(page.locator('.document-name strong')).toHaveText('export.pdf')
+    await expect(page.locator('.annotation-layer rect')).toHaveCount(0)
+    await expect.poll(async () => page.locator('.pdf-surface canvas').evaluate((c: HTMLCanvasElement) => {
+      const ctx = c.getContext('2d')!, pixel = ctx.getImageData(Math.floor(60 * c.width / c.clientWidth), Math.floor(45 * c.height / c.clientHeight), 1, 1).data
+      return pixel[1]! > 245 && pixel[2]! > 160 && pixel[2]! < 220
+    })).toBeTruthy()
+  })
+}
+
+test('Ungültige Dateien, Seitenverwaltung und Dokumentwechsel', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'kaputt.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a pdf') })
+  await expect(page.getByRole('alert')).toContainText('konnte nicht geöffnet')
+  await page.getByRole('button', { name: 'Fehler schließen' }).click()
+  await page.getByRole('button', { name: /TESTDOKUMENT LADEN/ }).click()
+  await page.getByRole('button', { name: 'Seite 2', exact: true }).click()
+  await page.getByRole('button', { name: 'Seite nach vorne', exact: true }).click()
+  await page.getByRole('button', { name: 'Seite löschen', exact: true }).click()
+  await expect(page.locator('.thumbnail')).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Seite löschen', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Rückgängig', exact: true }).click()
+  await expect(page.locator('.thumbnail')).toHaveCount(2)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('button', { name: 'Nächste Seite', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
+  await page.screenshot({ path: 'test-results/mobile-editor.png', fullPage: true })
+})
