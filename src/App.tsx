@@ -5,6 +5,7 @@ import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { pdfOptions } from './pdf-options'
 import type { NativeText, TextEdit, PageTextEdits } from './native-pdf'
 import { embedTextFont } from './text-font'
 import { useEditorMotion } from './useEditorMotion'
@@ -166,7 +167,7 @@ function App() {
       const { replacePdfTexts } = await import('./native-pdf')
       const data = await replacePdfTexts(bytes, edits)
       if (cancelled) return
-      loadingTask = pdfjs.getDocument({ data: data.slice(), cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' })
+      loadingTask = pdfjs.getDocument({ data: data.slice(), ...pdfOptions })
       const loaded = await loadingTask.promise
       if (cancelled) { void loaded.loadingTask.destroy(); return }
       const old = previewRef.current; previewRef.current = loaded; setPreviewPdf(loaded); void old?.loadingTask.destroy()
@@ -209,7 +210,7 @@ function App() {
     try {
       const data = new Uint8Array(await file.arrayBuffer())
       await PDFDocument.load(data)
-      loaded = await pdfjs.getDocument({ data: data.slice(), cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' }).promise
+      loaded = await pdfjs.getDocument({ data: data.slice(), ...pdfOptions }).promise
       if (!loaded.numPages) throw new Error('empty')
       const first = await loaded.getPage(1); const viewport = first.getViewport({ scale: 1 })
       void pdf?.loadingTask.destroy()

@@ -112,7 +112,7 @@ export async function replacePdfTexts(bytes: Uint8Array, changes: PageTextEdits[
   try {
     // Fetch before mutating the document; every change starts from the original bytes.
     fontsPromise ??= Promise.all(['Regular', 'Bold'].map(async weight => {
-      const response = await fetch(`/fonts/NotoSans-${weight}.ttf`)
+      const response = await fetch(`${import.meta.env.BASE_URL}fonts/NotoSans-${weight}.ttf`)
       if (!response.ok) throw new Error('Ersatzschrift konnte nicht geladen werden.')
       return response.arrayBuffer()
     })).catch(error => { fontsPromise = undefined; throw error })

@@ -4,6 +4,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 45000,
+  webServer: process.env.CI ? {
+    command: 'npm run preview -- --host 127.0.0.1 --port 5175 --strictPort',
+    url: process.env.TEST_URL || 'http://127.0.0.1:5175',
+    reuseExistingServer: false,
+  } : undefined,
   use: {
     baseURL: process.env.TEST_URL || 'http://127.0.0.1:5175',
     viewport: { width: 1440, height: 1100 },

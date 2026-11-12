@@ -8,6 +8,7 @@ import { prepareMergeInputs, mergePdfs } from './merge-pdf'
 import type { MergeInput } from './merge-pdf'
 import { downloadBlob } from './conversion'
 import { PdfPreview } from './PdfPreview'
+import { pdfOptions } from './pdf-options'
 import './ConversionPanel.css'
 import './MergePanel.css'
 
@@ -24,7 +25,7 @@ export default function MergePanel({ visible, onEditorFile, onOpenEditor }: Prop
   useEffect(() => {
     if (!result) { setPreview(null); return }
     let cancelled = false
-    const loading = pdfjs.getDocument({ data: result.slice(), cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' })
+    const loading = pdfjs.getDocument({ data: result.slice(), ...pdfOptions })
     void loading.promise.then(doc => { if (!cancelled) setPreview(doc) }).catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Vorschau konnte nicht geladen werden.') })
     return () => { cancelled = true; void loading.destroy() }
   }, [result])

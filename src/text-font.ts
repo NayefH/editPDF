@@ -3,7 +3,7 @@ import type { PDFDocument } from 'pdf-lib'
 let fontBytes: Promise<ArrayBuffer> | undefined
 
 export async function embedTextFont(document: PDFDocument) {
-  fontBytes ??= fetch('/fonts/NotoSans-Regular.ttf').then(response => {
+  fontBytes ??= fetch(`${import.meta.env.BASE_URL}fonts/NotoSans-Regular.ttf`).then(response => {
     if (!response.ok) throw new Error('Die Schrift für den PDF-Export konnte nicht geladen werden.')
     return response.arrayBuffer()
   }).catch(error => { fontBytes = undefined; throw error })

@@ -6,12 +6,12 @@ import { PDFDocument } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { PdfPreview } from './PdfPreview'
+import { pdfOptions } from './pdf-options'
 import { downloadBlob, pdfToFiles, photoAccept, photosToPdf, preparePhotos } from './conversion'
 import type { PdfTarget, Photo, PhotoSettings } from './conversion'
 import './ConversionPanel.css'
 
 type Props = { visible: boolean; onEditorFile?: () => Promise<File>; onOpenEditor: (file: File) => void }
-const pdfOptions = { cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' }
 
 export default function ConversionPanel({ visible, onEditorFile, onOpenEditor }: Props) {
   const [mobilePane, setMobilePane] = useState<'files' | 'options'>('files')
