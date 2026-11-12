@@ -5,7 +5,7 @@ export default defineConfig({
   workers: 1,
   timeout: 45000,
   webServer: process.env.CI ? {
-    command: 'npm run preview -- --host 127.0.0.1 --port 5175 --strictPort',
+    command: 'node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5175 --strictPort',
     url: process.env.TEST_URL || 'http://127.0.0.1:5175',
     reuseExistingServer: false,
   } : undefined,
