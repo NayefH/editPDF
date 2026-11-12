@@ -4,27 +4,13 @@ import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowRightLeft, FileText, ImagePlu
 import { PDFDocument } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import { PDFCanvas } from './PDFCanvas'
+import { PdfPreview } from './PdfPreview'
 import { downloadBlob, pdfToFiles, photoAccept, photosToPdf, preparePhotos } from './conversion'
 import type { PdfTarget, Photo, PhotoSettings } from './conversion'
 import './ConversionPanel.css'
 
 type Props = { visible: boolean; onEditorFile?: () => Promise<File>; onOpenEditor: (file: File) => void }
 const pdfOptions = { cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' }
-
-function PdfPreview({ pdf }: { pdf: PDFDocumentProxy }) {
-  const container = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState(320), [page, setPage] = useState(0)
-  useEffect(() => { setPage(0) }, [pdf])
-  useEffect(() => {
-    const el = container.current!
-    const resize = new ResizeObserver(() => { if (el.clientWidth) setWidth(Math.min(450, Math.max(120, el.clientWidth - 40))) })
-    resize.observe(el)
-    return () => resize.disconnect()
-  }, [])
-  const current = Math.min(page, pdf.numPages - 1)
-  return <div className="conversion-preview" ref={container}><div className="conversion-preview-nav"><button aria-label="Vorschau: vorherige Seite" disabled={current === 0} onClick={() => setPage(p => p - 1)}>‹</button><span>Seite {current + 1} / {pdf.numPages}</span><button aria-label="Vorschau: nächste Seite" disabled={current === pdf.numPages - 1} onClick={() => setPage(p => p + 1)}>›</button></div><div className="conversion-preview-page"><PDFCanvas pdf={pdf} page={current} width={width} describe /></div></div>
-}
 
 export default function ConversionPanel({ visible, onEditorFile, onOpenEditor }: Props) {
   const root = useRef<HTMLDivElement>(null), pdfInput = useRef<HTMLInputElement>(null), photoInput = useRef<HTMLInputElement>(null)

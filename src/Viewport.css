@@ -1,0 +1,66 @@
+/* The application occupies the viewport. Document panes own their scrolling. */
+html,body,#root{height:100%;min-height:0}body{overflow:hidden}
+.app-shell{height:100dvh;min-height:0;display:flex;flex-direction:column;overflow:hidden;width:100%}
+.app-shell .site-header{flex-shrink:0}
+.app-shell main{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:clamp(8px,1.5vh,20px) 0}
+.app-shell main>[role=tabpanel]{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.app-shell .editor{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.app-shell .editor-topbar{flex-shrink:0;min-height:68px;padding:10px 16px}
+.app-shell .editor-toolbar{flex-shrink:0;min-height:56px}
+.app-shell .editor-statusbar{flex-shrink:0}
+.app-shell .editor-body,.app-shell .has-document .editor-body{flex:1;height:auto;min-height:0;overflow:hidden}
+.app-shell .workspace{min-height:0;min-width:0}
+.app-shell .pages-sidebar{min-height:0;overflow:auto}
+.app-shell .properties-sidebar{min-height:0;overflow-y:auto}
+.app-shell .upload-view{height:100%;min-height:0;justify-content:center;padding:clamp(12px,3vh,36px)}
+.app-shell .upload-zone{min-height:0;max-height:100%}
+.app-shell .converter{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.app-shell .converter-heading{flex-shrink:0;padding:14px 20px;gap:12px}
+.app-shell .converter-content{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.app-shell .conversion-layout{flex:1;min-height:0;overflow:hidden}
+.app-shell .conversion-workspace,.app-shell .conversion-options{min-height:0;overflow:auto;overscroll-behavior:contain}
+.app-shell .conversion-empty{min-height:0;height:100%;padding:20px;gap:14px}
+.app-shell .conversion-progress,.app-shell .conversion-message{flex-shrink:0;max-height:30vh;overflow:auto}
+@media(max-width:1000px){
+ .app-shell .site-header{height:auto;min-height:106px;padding:14px 20px;flex-wrap:wrap;gap:12px}
+ .app-shell .header-nav{display:contents}.app-shell .brand{order:0}.app-shell .help-button{order:1;margin-left:auto}
+ .app-shell .workspace-tabs{order:2;width:100%;display:flex}.app-shell .workspace-tabs button{flex:1;min-width:0;padding:10px 6px;font-size:16px}
+}
+@media(max-width:700px){
+ .app-shell .site-header{padding:12px 14px;gap:10px;min-height:106px}
+ .app-shell .workspace-tabs button{font-size:14px}
+ .app-shell .editor:not(.has-document) .document-name{display:none}
+ .app-shell .editor:not(.has-document) .editor-topbar{min-height:60px}
+ .app-shell .has-document .editor-body{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,.8fr)}
+ .app-shell .pages-sidebar{display:none}
+ .app-shell .workspace,.app-shell .has-document .workspace{height:auto;min-height:0}
+ .app-shell .properties-sidebar{width:100%;min-width:0;max-width:none}
+ .app-shell .editor:not(.has-document) .properties-sidebar{display:none}
+ .app-shell .conversion-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+ .app-shell .converter-heading{padding:10px 12px;gap:10px}
+ .app-shell .converter-heading h1{font-size:20px}
+ .app-shell .conversion-types{display:flex;flex-wrap:nowrap;gap:6px}
+ .app-shell .conversion-types button{padding:9px 6px;font-size:14px;white-space:normal}
+ .app-shell .conversion-empty{padding:12px;gap:10px;height:auto;min-height:100%}
+ .app-shell .conversion-empty>svg{width:32px;height:32px}
+ .app-shell .conversion-empty h2{font-size:19px}
+ .app-shell .conversion-options{padding:16px;gap:16px}
+}
+@media(max-height:700px){
+ .app-shell .upload-zone{padding:18px;gap:10px}
+ .app-shell .upload-file-icon{width:36px;height:36px;margin-bottom:0}
+ .app-shell .upload-zone h1,.app-shell .upload-zone h2{font-size:26px}
+ .app-shell .converter-heading{padding:10px 14px}
+ .app-shell .conversion-empty{gap:9px;padding:12px}
+ .app-shell .conversion-empty>svg{width:30px;height:30px}
+}
+@media(max-height:550px){
+ .app-shell .editor:not(.has-document) .editor-toolbar{display:none}
+ .app-shell .upload-file-icon,.app-shell .upload-zone>h1,.app-shell .upload-zone>p,.app-shell .upload-limit{display:none}
+ .app-shell .upload-zone{padding:8px;flex-shrink:0;min-height:66px}
+ .app-shell .upload-button{margin:0}
+ .app-shell .demo-button{margin-top:10px;flex-shrink:0}
+ .app-shell .converter-heading h1{display:none}
+ .app-shell .converter-heading .conversion-types{width:100%}
+ .app-shell .conversion-empty>svg,.app-shell .conversion-empty>small{display:none}
+}

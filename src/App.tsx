@@ -11,7 +11,9 @@ import { useEditorMotion } from './useEditorMotion'
 import { PDFCanvas } from './PDFCanvas'
 import { downloadBlob } from './conversion'
 import './App.css'
+import './Viewport.css'
 const ConversionPanel = lazy(() => import('./ConversionPanel'))
+const MergePanel = lazy(() => import('./MergePanel'))
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 type Tool = 'edit' | 'select' | 'text' | 'highlight' | 'draw' | 'rectangle' | 'image'
@@ -35,8 +37,9 @@ const uid = () => crypto.randomUUID()
 
 function App() {
   const rootRef = useRef<HTMLDivElement>(null)
-  const [workspace, setWorkspace] = useState<'edit' | 'convert'>('edit')
+  const [workspace, setWorkspace] = useState<'edit' | 'convert' | 'merge'>('edit')
   const [converterVisited, setConverterVisited] = useState(false)
+  const [mergeVisited, setMergeVisited] = useState(false)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
   const [fileName, setFileName] = useState('')
@@ -345,8 +348,8 @@ function App() {
       <a className="brand" href="./" aria-label="EDIT PDF Startseite"><span className="brand-icon"><FileText size={23} strokeWidth={1.8} /></span>EDIT<span className="brand-dot">//</span>PDF</a>
       <nav className="header-nav"><div className="workspace-tabs" role="tablist" aria-label="Bereich" onKeyDown={e => {
         if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-        e.preventDefault(); const next = workspace === 'edit' ? 'convert' : 'edit'; setWorkspace(next); setConverterVisited(true); document.getElementById(next + '-tab')?.focus()
-      }}><button id="edit-tab" role="tab" aria-selected={workspace === 'edit'} aria-controls="pdf-editor-panel" tabIndex={workspace === 'edit' ? 0 : -1} onClick={() => setWorkspace('edit')}>Bearbeiten</button><button id="convert-tab" role="tab" aria-selected={workspace === 'convert'} aria-controls="converter-panel" tabIndex={workspace === 'convert' ? 0 : -1} onClick={() => { setConverterVisited(true); setWorkspace('convert') }}>Konvertieren</button></div><button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /> Hilfe</button></nav>
+        e.preventDefault(); const tabs = ['edit', 'convert', 'merge'] as const; const next = tabs[(tabs.indexOf(workspace) + (e.key === 'ArrowRight' ? 1 : 2)) % 3]!; setWorkspace(next); if (next === 'convert') setConverterVisited(true); if (next === 'merge') setMergeVisited(true); document.getElementById(next + '-tab')?.focus()
+      }}><button id="edit-tab" role="tab" aria-selected={workspace === 'edit'} aria-controls="pdf-editor-panel" tabIndex={workspace === 'edit' ? 0 : -1} onClick={() => setWorkspace('edit')}>Bearbeiten</button><button id="convert-tab" role="tab" aria-selected={workspace === 'convert'} aria-controls="converter-panel" tabIndex={workspace === 'convert' ? 0 : -1} onClick={() => { setConverterVisited(true); setWorkspace('convert') }}>Konvertieren</button><button id="merge-tab" role="tab" aria-selected={workspace === 'merge'} aria-controls="merge-panel" tabIndex={workspace === 'merge' ? 0 : -1} onClick={() => { setMergeVisited(true); setWorkspace('merge') }}>Kombinieren</button></div><button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /> Hilfe</button></nav>
     </header>
     <main>
       <div id="pdf-editor-panel" role="tabpanel" aria-labelledby="edit-tab" hidden={workspace !== 'edit'}><section className={`editor ${pdf ? 'has-document' : ''}`} aria-label="PDF-Editor">
@@ -389,6 +392,7 @@ function App() {
         <div className="editor-statusbar"><span>{pdf ? `${pages.length} ${pages.length === 1 ? 'Seite' : 'Seiten'}` : 'Keine Datei'}</span><div className="zoom-controls"><button aria-label="Verkleinern" onClick={() => setZoom(z => Math.max(25, z - 10))} disabled={!pdf || zoom <= 25}><Minus size={14} /></button><span>{pdf ? `${zoom} %` : '100 %'}</span><button aria-label="Vergrößern" onClick={() => setZoom(z => Math.min(200, z + 10))} disabled={!pdf || zoom >= 200}><Plus size={14} /></button><span className="zoom-divider" /><button aria-label="Seite einpassen" title="Seite einpassen" disabled={!pdf} onClick={() => { const container = surfaceRef.current?.parentElement?.parentElement; if (container) setZoom(Math.max(25, Math.min(200, Math.floor((container.clientWidth - 72) / pageDims.width * 100)))) }}><Maximize size={14} /></button></div></div>
       </section></div>
       <div id="converter-panel" role="tabpanel" aria-labelledby="convert-tab" hidden={workspace !== 'convert'}>{converterVisited && <Suspense fallback={<div className="converter-loading" role="status">Konverter wird geladen …</div>}><ConversionPanel visible={workspace === 'convert'} onEditorFile={pdf ? createEditorFile : undefined} onOpenEditor={file => { setWorkspace('edit'); void loadFile(file) }} /></Suspense>}</div>
+      <div id="merge-panel" role="tabpanel" aria-labelledby="merge-tab" hidden={workspace !== 'merge'}>{mergeVisited && <Suspense fallback={<div className="converter-loading" role="status">PDF-Werkzeug wird geladen …</div>}><MergePanel visible={workspace === 'merge'} onEditorFile={pdf ? createEditorFile : undefined} onOpenEditor={file => { setWorkspace('edit'); void loadFile(file) }} /></Suspense>}</div>
     </main>
     {notice && <div className="toast" role="status"><CheckCheck size={17} />{notice}<button aria-label="Meldung schließen" onClick={() => setNotice('')}><X size={15} /></button></div>}
     {error && <div className="error-toast" role="alert"><CircleHelp size={18} /><span>{error}</span><button aria-label="Fehler schließen" onClick={() => setError('')}><X size={16} /></button></div>}

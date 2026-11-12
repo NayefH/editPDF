@@ -2,7 +2,7 @@
 
 Stand: 12. November 2026. Getestet wurde das lokale Produktionsbuild in installiertem Google Chrome unter Windows mit Playwright.
 
-**Ergebnis: 53 Tests erfolgreich, 0 fehlgeschlagen, 0 übersprungen, 0 instabile Tests. Laufzeit der abschließenden Suite: rund 116 Sekunden. TypeScript-Prüfung und Produktionsbuild erfolgreich.**
+**Ergebnis: 66 unterschiedliche Tests erfolgreich. Der Gesamtlauf mit 65 Tests war erfolgreich (rund 144 Sekunden); nach der letzten Anpassung für niedrige Fensterhöhen wurden alle 13 Kombinations- und Viewport-Tests einschließlich eines zusätzlichen Abbruchtests erneut erfolgreich geprüft. TypeScript-Prüfung und Produktionsbuild erfolgreich.**
 
 | Bereich | Geprüfte Abläufe |
 | --- | --- |
@@ -23,6 +23,9 @@ Stand: 12. November 2026. Getestet wurde das lokale Produktionsbuild in installi
 | Foto-PDFs | JPG/JPEG, PNG, WebP und AVIF; Reihenfolge, Drehung, JPEG-EXIF-Ausrichtung, A4, Hochformat, Bildformat, 0-/20-mm-Ränder, Farbkontrolle der tatsächlich gerenderten PDF-Vorschau, mehrseitiger Download |
 | Bereichswechsel | Foto-PDF im Editor öffnen; bearbeitete Editor-PDF inklusive Live-Entwurf im Konverter übernehmen; Fotoauswahl und Editorzustand beim Wechsel erhalten |
 | Grenzen und Konverteransicht | Ungültige und defekte Fotos, 20-MB-Fotogrenze, höchstens 50 Fotos, höchstens 100 exportierte Seiten, größere Eingabeschrift und responsive Ansichten bei 360/768/1440 Pixel |
+| PDFs kombinieren | Mehrfachauswahl, Drag-and-drop, Reihenfolge ändern, Entfernen, Live-Vorschau mit Seitennavigation, Download mit deutschem Dateinamen; Erhalt von Text, Seitenformat, Drehung und CropBox; Ergebnis im Editor öffnen; bearbeitete Editor-PDF samt unbestätigtem Entwurf hinzufügen |
+| Kombinationszustand | Auswahl beim Bereichswechsel erhalten, altes Ergebnis nach Listenänderung verwerfen, ungültigen Mehrfachupload vollständig zurückweisen, Datei- und Seitengrenzen, Abbrechen beim Prüfen und erneutes Hinzufügen |
+| Viewport | Startseite, geladener Editor, Konverter und Kombinationsansicht bei 360×640, 390×844, 768×1024, 1280×720, 1440×900 und 844×390 Pixeln ohne äußeren horizontalen oder vertikalen Scrollbereich; erreichbare Uploads und Downloads; lange Dateiliste scrollt intern; Tabnavigation per Pfeiltasten |
 
 Heruntergeladene Dateien wurden mit PDF.js beziehungsweise pdf-lib unabhängig von der Editoroberfläche auf Textinhalt, Seitenzahl, Seitenreihenfolge und PDF-Geometrie geprüft. Bei den erweiterten Funktionstests werden unbehandelte Browserfehler ebenfalls als Testfehler gewertet.
 
@@ -47,4 +50,4 @@ npx vite preview --host 127.0.0.1 --port 5175 --strictPort
 npm test
 ```
 
-Testquellen: `tests/editor.spec.ts`, `tests/functions.spec.ts` und `tests/conversion.spec.ts`. Maschinenlesbares Ergebnis der Prüfung: `test-results/results.json` (lokal erzeugt und nicht im Repository gespeichert).
+Testquellen: `tests/editor.spec.ts`, `tests/functions.spec.ts`, `tests/conversion.spec.ts`, `tests/merge.spec.ts` und `tests/viewport.spec.ts`. Maschinenlesbares Ergebnis der abschließenden gezielten Prüfung: `test-results/results-viewport-merge.json` (lokal erzeugt und nicht im Repository gespeichert).
