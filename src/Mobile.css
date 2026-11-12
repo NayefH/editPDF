@@ -1,0 +1,123 @@
+.mobile-pane-nav{display:none}
+.app-shell{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.app-shell .pdf-surface.cursor-edit,.app-shell .pdf-surface.cursor-select{touch-action:pan-x pan-y pinch-zoom}
+.app-shell .annotation-layer g,.app-shell .annotation-layer g *{touch-action:none}
+
+@media(max-width:700px),(max-width:1000px) and (max-height:500px){
+ body{min-width:320px}
+ .app-shell main{width:calc(100% - 16px);padding:8px 0}
+ .app-shell .site-header{min-height:0;padding:8px 12px;gap:6px}
+ .app-shell .brand{font-size:25px;letter-spacing:-1px}
+ .app-shell .help-button{min-height:44px;padding:0 4px;font-size:14px}
+ .app-shell .workspace-tabs button{min-height:44px;padding:8px 4px;font-size:14px}
+ .app-shell button{touch-action:manipulation}
+ .app-shell .mobile-pane-nav{display:flex;flex-shrink:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:#10170a;min-height:48px}
+ .app-shell .mobile-pane-nav button{flex:1;min-width:0;min-height:46px;font-size:14px;padding:8px 5px;color:#9bb281;border-right:1px solid #2e3823}
+ .app-shell .mobile-pane-nav button:last-child{border-right:0}
+ .app-shell .mobile-pane-nav button[aria-pressed=true]{color:#bcff00;background:#20300e;box-shadow:inset 0 -2px #bcff00}
+ .app-shell .editor-topbar{min-height:0;padding:10px;gap:8px}
+ .app-shell .document-name{width:100%;min-width:0}
+ .app-shell .document-name strong,.app-shell .has-document .document-name strong{max-width:100%;font-size:14px;letter-spacing:0}
+ .app-shell .document-name>div>span{font-size:12px}
+ .app-shell .document-actions{width:100%;gap:8px}
+ .app-shell .document-actions .button{flex:1;width:auto;min-width:0;min-height:44px;padding:8px;font-size:13px;gap:6px;white-space:normal}
+ .app-shell .document-actions .button-secondary>span{display:block}
+ .app-shell .document-actions .button svg{width:16px;height:16px}
+ .app-shell .editor:not(.has-document) .editor-toolbar{display:none}
+ .app-shell .editor:not(.has-document) .document-name{display:none}
+ .app-shell .editor-toolbar{height:68px;min-height:68px;padding:0;gap:0;overflow:hidden}
+ .app-shell .tool-group{flex:1;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:#607e28 transparent;gap:2px;padding:3px 4px}
+ .app-shell .tool-button{flex-shrink:0;min-height:56px;min-width:70px;padding:6px 9px;flex-direction:column;gap:5px;font-size:12px;line-height:1.3;text-transform:none}
+ .app-shell .tool-button>span,.app-shell .tool-button.active>span{display:block}
+ .app-shell .tool-button svg{width:21px;height:21px}
+ .app-shell .history-buttons{flex-shrink:0;gap:0;padding:0 2px;background:#10170a}
+ .app-shell .history-buttons button{min-width:44px;min-height:44px;padding:10px}
+ .app-shell .has-document .editor-body{display:flex;flex-wrap:nowrap;min-height:0}
+ .app-shell .has-document .workspace{width:100%;height:100%;min-height:0;flex:1;flex-basis:auto}
+ .app-shell .has-document .page-scroll{padding:12px 14px;overscroll-behavior:contain;width:100%;gap:12px}
+ .app-shell .preview-heading{width:100%;flex-shrink:0;gap:5px}
+ .app-shell .live-indicator{font-size:12px}
+ .app-shell .page-label{font-size:12px;gap:3px;letter-spacing:0;white-space:nowrap}
+ .app-shell .page-label button{min-width:44px;min-height:44px;padding:0;font-size:28px}
+ .app-shell .has-document .properties-sidebar{display:block;width:100%;height:100%;border:0;overflow:auto;overscroll-behavior:contain}
+ .app-shell .has-document .properties-content{display:block;padding:16px}
+ .app-shell .has-document .property-tool{margin-bottom:16px}
+ .app-shell .has-document .properties-content>.property-field{margin-bottom:18px}
+ .app-shell .has-document .property-field textarea{font-size:18px;min-height:120px}
+ .app-shell .has-document .color-options{flex-wrap:wrap;gap:10px}
+ .app-shell .has-document .color-options .color-swatch,.app-shell .has-document .color-options .custom-color{width:44px;height:44px;min-width:44px}
+ .app-shell .has-document .size-control{height:48px}
+ .app-shell .has-document .properties-sidebar button{min-height:44px}
+ .app-shell .has-document .pages-sidebar{display:flex;width:100%;height:100%;min-height:0;border:0;overflow:hidden}
+ .app-shell .has-document .pages-sidebar .sidebar-title{flex-shrink:0;min-height:44px;height:44px}
+ .app-shell .has-document .thumbnails{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));align-content:start;gap:16px;min-height:0;padding:16px}
+ .app-shell .has-document .thumbnail{width:100%;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px}
+ .app-shell .has-document .thumbnail canvas{max-width:100px;height:auto!important}
+ .app-shell .has-document .page-actions{flex-shrink:0;padding:6px;gap:16px}
+ .app-shell .has-document .page-actions button{min-width:48px;min-height:44px;padding:10px}
+ .app-shell .editor[data-mobile-pane=document] .properties-sidebar,.app-shell .editor[data-mobile-pane=document] .pages-sidebar,
+ .app-shell .editor[data-mobile-pane=properties] .workspace,.app-shell .editor[data-mobile-pane=properties] .pages-sidebar,
+ .app-shell .editor[data-mobile-pane=pages] .workspace,.app-shell .editor[data-mobile-pane=pages] .properties-sidebar{display:none}
+ .app-shell .editor-statusbar{height:48px;min-height:48px;padding:0 8px;gap:4px}
+ .app-shell .editor-statusbar>span{font-size:12px;max-width:95px}
+ .app-shell .zoom-controls{gap:2px;font-size:13px}
+ .app-shell .zoom-controls>span{min-width:42px;text-align:center}
+ .app-shell .zoom-controls button,.app-shell .zoom-controls button:last-child{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:8px}
+ .app-shell .zoom-controls .zoom-divider{display:none}
+ .app-shell .upload-view{padding:16px;gap:12px}
+ .app-shell .upload-zone{padding:20px 12px;gap:10px}
+ .app-shell .upload-zone h1{font-size:26px}
+ .app-shell .upload-button{min-height:48px;margin:8px 0 0}
+ .app-shell .demo-button{min-height:44px;margin-top:0;font-size:14px}
+ .app-shell .converter-heading{padding:10px 12px;gap:10px}
+ .app-shell .converter-heading h1{font-size:20px}
+ .app-shell .conversion-types button{min-height:48px;font-size:14px}
+ .app-shell .conversion-layout{display:flex;min-height:0;flex:1}
+ .app-shell .conversion-workspace,.app-shell .conversion-options{flex:1;width:100%;min-width:0;min-height:0}
+ .app-shell .converter[data-mobile-pane=files] .conversion-options,.app-shell .converter[data-mobile-pane=options] .conversion-workspace{display:none}
+ .app-shell .conversion-options{border-left:0;border-top:0;padding:18px;gap:18px}
+ .app-shell .conversion-options input,.app-shell .conversion-options select{font-size:18px;min-height:48px}
+ .app-shell .conversion-options .button,.app-shell .conversion-filebar .button{min-height:48px;font-size:15px}
+ .app-shell .conversion-empty{height:auto;min-height:100%;padding:20px 12px;gap:14px}
+ .app-shell .conversion-empty .button{min-height:48px;font-size:15px;max-width:100%}
+ .app-shell .conversion-preview-nav button{min-width:44px;min-height:44px}
+ .app-shell .photo-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+ .app-shell .photo-controls button,.app-shell .merge-file-actions button{min-width:44px;min-height:44px;padding:10px}
+ .app-shell .merge-file-list>li{gap:10px}
+ .app-shell .merge-file-name{flex-basis:calc(100% - 65px)}
+ .app-shell .merge-file-actions{width:100%;justify-content:flex-end;border-top:1px solid var(--border);padding-top:8px}
+ .app-shell .merge-panel .converter-heading .button{min-height:44px;font-size:13px;padding:8px;gap:5px}
+ .app-shell .conversion-progress,.app-shell .conversion-message{padding:10px 12px;max-height:35dvh;font-size:14px}
+ .app-shell .conversion-message button,.app-shell .conversion-progress .button{min-width:44px;min-height:44px}
+ .app-shell .modal{width:calc(100% - 24px);max-height:calc(100dvh - 24px);padding:20px;overflow:auto}
+ .app-shell .modal-close{min-width:44px;min-height:44px}
+}
+@media(min-width:500px) and (max-width:1000px) and (max-height:500px){
+ .app-shell .site-header{flex-wrap:nowrap;min-height:56px;padding:5px 12px;gap:14px}
+ .app-shell .brand{font-size:22px;white-space:nowrap}
+ .app-shell .workspace-tabs{order:1;width:auto;flex:1}
+ .app-shell .workspace-tabs button{font-size:14px}
+ .app-shell .help-button{order:2;margin-left:0;font-size:0;min-width:44px;justify-content:center}
+ .app-shell .has-document .editor-topbar{flex-wrap:nowrap;min-height:58px;padding:6px 10px}
+ .app-shell .has-document .document-name{width:auto;flex:1}
+ .app-shell .has-document .document-name>div>span{display:none}
+ .app-shell .has-document .document-actions{width:310px;flex-shrink:0}
+ .app-shell .upload-zone{padding:8px;min-height:66px}
+ .app-shell .upload-zone h1{display:none}
+ .app-shell .upload-view{padding:8px 16px;gap:2px}
+ .app-shell .conversion-empty{padding:12px;gap:9px}
+ .app-shell .conversion-empty h2{font-size:18px}
+ .app-shell .conversion-empty p{font-size:14px}
+ .app-shell .converter-heading h1{display:none}
+}
+/* Preserve the form area when a phone's onscreen keyboard reduces its height. */
+@media(max-width:499px) and (max-height:500px){
+ .app-shell .site-header .brand,.app-shell .site-header .help-button{display:none}
+ .app-shell .site-header{padding:6px 8px}
+ .app-shell .editor[data-mobile-pane=properties] .editor-topbar,
+ .app-shell .editor[data-mobile-pane=properties] .editor-toolbar,
+ .app-shell .editor[data-mobile-pane=properties] .editor-statusbar{display:none}
+ .app-shell .converter-heading h1{display:none}
+ .app-shell .has-document .properties-content{padding:12px}
+ .app-shell .has-document .property-tool{display:none}
+}

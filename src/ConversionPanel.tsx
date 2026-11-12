@@ -1,3 +1,4 @@
+import { MobilePaneNav } from './MobilePaneNav'
 import { useEffect, useRef, useState } from 'react'
 import { animate, createScope } from 'animejs'
 import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowRightLeft, FileText, ImagePlus, LoaderCircle, Plus, RotateCw, Trash2, Upload, X } from 'lucide-react'
@@ -13,6 +14,7 @@ type Props = { visible: boolean; onEditorFile?: () => Promise<File>; onOpenEdito
 const pdfOptions = { cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' }
 
 export default function ConversionPanel({ visible, onEditorFile, onOpenEditor }: Props) {
+  const [mobilePane, setMobilePane] = useState<'files' | 'options'>('files')
   const root = useRef<HTMLDivElement>(null), pdfInput = useRef<HTMLInputElement>(null), photoInput = useRef<HTMLInputElement>(null)
   const operation = useRef<AbortController | null>(null), mounted = useRef(true)
   const [mode, setMode] = useState<'pdf' | 'photos'>('pdf')
@@ -93,10 +95,11 @@ export default function ConversionPanel({ visible, onEditorFile, onOpenEditor }:
   function changeSettings(next: Partial<PhotoSettings>) { setSettings(s => ({ ...s, ...next })); setPhotoResult(null) }
   const resultName = (outputName.trim().replace(/\.pdf$/i, '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') || 'Fotos') + '.pdf'
 
-  return <section className="converter" ref={root} aria-label="Dateien konvertieren">
+  return <section data-mobile-pane={mobilePane} className="converter" ref={root} aria-label="Dateien konvertieren">
     <input ref={pdfInput} type="file" accept="application/pdf,.pdf" hidden aria-label="PDF für Konvertierung" onChange={e => choosePdf(e.target.files?.[0])} />
     <input ref={photoInput} type="file" accept={photoAccept} multiple hidden aria-label="Fotos für PDF" onChange={e => addPhotos(Array.from(e.target.files ?? []))} />
-    <div className="converter-heading"><h1>Konvertieren</h1><div className="conversion-types" role="tablist" aria-label="Konvertierungsart"><button role="tab" aria-selected={mode === 'pdf'} disabled={!!busy} onClick={() => { setMode('pdf'); setError(''); setNotice('') }}><FileText size={19} />PDF → Bilder / Text</button><button role="tab" aria-selected={mode === 'photos'} disabled={!!busy} onClick={() => { setMode('photos'); setError(''); setNotice('') }}><ImagePlus size={19} />Fotos → PDF</button></div></div>
+    <div className="converter-heading"><h1>Konvertieren</h1><div className="conversion-types" role="tablist" aria-label="Konvertierungsart"><button role="tab" aria-selected={mode === 'pdf'} disabled={!!busy} onClick={() => { setMode('pdf'); setMobilePane('files'); setError(''); setNotice('') }}><FileText size={19} />PDF → Bilder / Text</button><button role="tab" aria-selected={mode === 'photos'} disabled={!!busy} onClick={() => { setMode('photos'); setMobilePane('files'); setError(''); setNotice('') }}><ImagePlus size={19} />Fotos → PDF</button></div></div>
+    <MobilePaneNav label="Konverteransicht" value={mobilePane} onChange={setMobilePane} items={[{ id: 'files', label: 'Dateien & Vorschau' }, { id: 'options', label: 'Einstellungen' }]} />
     <div className="converter-content" aria-busy={!!busy}>
       {mode === 'pdf' ? <div className="conversion-layout"><div className={`conversion-workspace ${dragging ? 'conversion-dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!busy) setDragging(true) }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }} onDrop={e => { e.preventDefault(); setDragging(false); if (!busy) choosePdf(e.dataTransfer.files[0]) }}>
         {pdfSource ? <><div className="conversion-filebar"><span><FileText size={17} />{pdfSource.name}</span><button className="button button-secondary" disabled={!!busy} onClick={() => pdfInput.current?.click()}><Upload size={17} />PDF wechseln</button></div><PdfPreview pdf={pdfSource.doc} /></> : <div className="conversion-empty"><FileText size={48} strokeWidth={1} /><h2>PDF auswählen</h2><p>Hier ablegen oder Datei öffnen</p><button className="button button-primary" disabled={!!busy} onClick={() => pdfInput.current?.click()}><Plus size={18} />PDF zum Konvertieren auswählen</button><small>Max. 50 MB</small></div>}

@@ -229,6 +229,8 @@ for (const width of [360, 768, 1440]) {
   test(`Konverter bei ${width}px: größere Schrift und kein Überlauf`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 }); await openConverter(page)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
+    const options = page.getByRole('navigation', { name: 'Konverteransicht' }).getByRole('button', { name: 'Einstellungen', exact: true })
+    if (await options.isVisible()) await options.click()
     expect(await page.getByRole('combobox', { name: 'Zielformat' }).evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(18)
     await page.getByRole('tab', { name: 'Fotos → PDF', exact: true }).click()
     await page.getByLabel('Fotos für PDF', { exact: true }).setInputFiles(await photo('Foto.png', 'png', '#0000ff'))

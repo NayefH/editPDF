@@ -21,6 +21,8 @@ for (const [width, height] of [[360, 640], [390, 844], [768, 1024], [1280, 720],
     await page.getByRole('tab', { name: 'Fotos → PDF', exact: true }).click(); await fits(page)
     await page.getByRole('tab', { name: 'Kombinieren', exact: true }).click()
     await expect(page.getByRole('button', { name: 'PDFs auswählen', exact: true })).toBeVisible(); await fits(page)
+    const options = page.getByRole('navigation', { name: 'Kombinationsansicht' }).getByRole('button', { name: 'Einstellungen', exact: true })
+    if (await options.isVisible()) await options.click()
     await page.getByRole('textbox', { name: 'Dateiname der kombinierten PDF' }).fill('Prüfung')
     await expect(page.getByRole('textbox', { name: 'Dateiname der kombinierten PDF' })).toBeInViewport()
     await fits(page)

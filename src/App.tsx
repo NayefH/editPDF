@@ -12,6 +12,8 @@ import { PDFCanvas } from './PDFCanvas'
 import { downloadBlob } from './conversion'
 import './App.css'
 import './Viewport.css'
+import './Mobile.css'
+import { MobilePaneNav } from './MobilePaneNav'
 const ConversionPanel = lazy(() => import('./ConversionPanel'))
 const MergePanel = lazy(() => import('./MergePanel'))
 
@@ -23,11 +25,11 @@ type PageState = { id: string; source: number; marks: Mark[]; replacements: Reco
 type TextBox = NativeText & { x: number; y: number; w: number; h: number }
 type Snapshot = PageState[]
 const tools = [
-  { id: 'edit', name: 'Text bearbeiten', icon: TextCursorInput, hint: 'Klicke auf vorhandenen Text, ändere ihn rechts und bestätige mit Übernehmen.' },
+  { id: 'edit', name: 'Text bearbeiten', icon: TextCursorInput, hint: 'Tippe auf vorhandenen Text und ändere ihn unter Eigenschaften.' },
   { id: 'select', name: 'Auswählen', icon: MousePointer2, hint: 'Klicke auf ein Element, um es auszuwählen oder zu verschieben.' },
   { id: 'text', name: 'Text hinzufügen', icon: Type, hint: 'Klicke auf eine freie Stelle, um Text hinzuzufügen.' },
   { id: 'highlight', name: 'Markieren', icon: Highlighter, hint: 'Ziehe über einen Bereich, um ihn farbig hervorzuheben.' },
-  { id: 'draw', name: 'Zeichnen', icon: Pencil, hint: 'Zeichne mit der Maus oder deinem Stift direkt auf dem Dokument.' },
+  { id: 'draw', name: 'Zeichnen', icon: Pencil, hint: 'Zeichne mit dem Finger, Stift oder der Maus auf dem Dokument.' },
   { id: 'rectangle', name: 'Formen', icon: Square, hint: 'Ziehe auf der Seite, um ein Rechteck zu zeichnen.' },
   { id: 'image', name: 'Bild', icon: ImagePlus, hint: 'Wähle ein Bild und klicke auf die gewünschte Position im Dokument.' },
 ] as const
@@ -40,6 +42,8 @@ function App() {
   const [workspace, setWorkspace] = useState<'edit' | 'convert' | 'merge'>('edit')
   const [converterVisited, setConverterVisited] = useState(false)
   const [mergeVisited, setMergeVisited] = useState(false)
+  const [mobilePane, setMobilePane] = useState<'document' | 'properties' | 'pages'>('document')
+  const [autoFit, setAutoFit] = useState(true)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
   const [fileName, setFileName] = useState('')
@@ -98,6 +102,19 @@ function App() {
   const textEditsKey = JSON.stringify(textEdits)
   const viewPdf = previewPdf ?? pdf
   useEditorMotion(rootRef, { tool, documentKey: pdf?.fingerprints[0] ?? '', page: activePage, dialog: help ? 'help' : pendingFile ? 'replace' : '', notice: notice || error, dragOver, previewVersion })
+
+
+  useEffect(() => { if (nativeForm || (!gesture.current && (selectedMark?.type === 'text' || selectedMark?.type === 'image'))) setMobilePane('properties') }, [nativeForm?.id, selectedMark?.id])
+  useEffect(() => {
+    if (!pdf || !autoFit) return
+    const container = rootRef.current?.querySelector<HTMLElement>('.workspace')
+    if (!container) return
+    const fit = () => {
+      if (container.clientWidth && matchMedia('(max-width: 700px), (max-width: 1000px) and (max-height: 500px)').matches) setZoom(Math.max(25, Math.min(100, Math.floor((container.clientWidth - 32) / pageDims.width * 100))))
+    }
+    const observer = new ResizeObserver(fit); observer.observe(container); fit()
+    return () => observer.disconnect()
+  }, [pdf, autoFit, pageDims.width])
 
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer) }, [notice])
   useEffect(() => {
@@ -199,7 +216,7 @@ function App() {
       setPdf(loaded); setBytes(data); setFileName(file.name); setFileSize(file.size)
       nativeCache.current.clear(); setNativeForm(null); setNativeTexts([]); setMarkTextDraft(null)
       setPages(Array.from({ length: loaded.numPages }, (_, i) => ({ id: uid(), source: i, marks: [], replacements: {} })))
-      setPageDims({ width: viewport.width, height: viewport.height }); setActivePage(0); setHistory([]); setFuture([]); setSelected(null)
+      setMobilePane('document'); setAutoFit(true); setPageDims({ width: viewport.width, height: viewport.height }); setActivePage(0); setHistory([]); setFuture([]); setSelected(null)
       setZoom(window.innerWidth < 700 ? Math.max(25, Math.floor((window.innerWidth - 80) / viewport.width * 100)) : 85)
     } catch (e) {
       if (loaded) void loaded.loadingTask.destroy()
@@ -249,9 +266,13 @@ function App() {
   }
   function pointerUp() {
     const next = draftRef.current
-    if (!next || !gesture.current) { gesture.current = null; setLive(null); return }
+    if (!next || !gesture.current) {
+      if (gesture.current?.moving && (gesture.current.mark.type === 'text' || gesture.current.mark.type === 'image')) setMobilePane('properties')
+      gesture.current = null; setLive(null); return
+    }
     const moving = gesture.current.moving
     if (moving || next.type === 'draw' || (next.w > .004 && next.h > .004)) { commit(pages.map((p, i) => i === activePage ? { ...p, marks: moving ? p.marks.map(m => m.id === next.id ? next : m) : [...p.marks, next] } : p)); setSelected(next.id) }
+    if (moving && (next.type === 'text' || next.type === 'image')) setMobilePane('properties')
     gesture.current = null; setLive(null)
   }
   function selectMark(event: ReactPointerEvent<SVGElement>, mark: Mark) {
@@ -338,7 +359,7 @@ function App() {
   }
 
   function movePage(direction: number) { const target = activePage + direction; if (target < 0 || target >= pages.length) return; const next = [...pages]; [next[activePage], next[target]] = [next[target]!, next[activePage]!]; commit(next); setActivePage(target) }
-  function chooseTool(next: Tool) { setTool(next); setSelected(null); setNativeForm(null); if (next === 'highlight') setColor('#bcff00'); if (next === 'image' && pdf) imageRef.current?.click() }
+  function chooseTool(next: Tool) { setMobilePane('document'); setTool(next); setSelected(null); setNativeForm(null); if (next === 'highlight') setColor('#bcff00'); if (next === 'image' && pdf) imageRef.current?.click() }
   const marks = [...(livePages[activePage]?.marks.filter(m => m.id !== draft?.id) ?? []), ...(draft ? [draft] : [])]
 
   return <div className="app-shell" ref={rootRef}>
@@ -352,21 +373,21 @@ function App() {
       }}><button id="edit-tab" role="tab" aria-selected={workspace === 'edit'} aria-controls="pdf-editor-panel" tabIndex={workspace === 'edit' ? 0 : -1} onClick={() => setWorkspace('edit')}>Bearbeiten</button><button id="convert-tab" role="tab" aria-selected={workspace === 'convert'} aria-controls="converter-panel" tabIndex={workspace === 'convert' ? 0 : -1} onClick={() => { setConverterVisited(true); setWorkspace('convert') }}>Konvertieren</button><button id="merge-tab" role="tab" aria-selected={workspace === 'merge'} aria-controls="merge-panel" tabIndex={workspace === 'merge' ? 0 : -1} onClick={() => { setMergeVisited(true); setWorkspace('merge') }}>Kombinieren</button></div><button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /> Hilfe</button></nav>
     </header>
     <main>
-      <div id="pdf-editor-panel" role="tabpanel" aria-labelledby="edit-tab" hidden={workspace !== 'edit'}><section className={`editor ${pdf ? 'has-document' : ''}`} aria-label="PDF-Editor">
+      <div id="pdf-editor-panel" role="tabpanel" aria-labelledby="edit-tab" hidden={workspace !== 'edit'}><section className={`editor ${pdf ? 'has-document' : ''}`} aria-label="PDF-Editor" data-mobile-pane={mobilePane}>
         <div className="editor-topbar">
           <div className="document-name"><span className="file-icon"><FileText size={18} /></span><div><strong>{fileName || 'Keine PDF geöffnet'}</strong>{pdf && <span>{pages.length} {pages.length === 1 ? 'Seite' : 'Seiten'} · {(fileSize / 1024 / 1024).toFixed(2).replace('.', ',')} MB</span>}</div></div>
           <div className="document-actions"><button className="button button-secondary" aria-label={pdf ? 'PDF wechseln' : 'PDF öffnen'} onClick={() => fileRef.current?.click()} disabled={!!busy}><Upload size={15} /><span>{pdf ? 'PDF wechseln' : 'PDF öffnen'}</span></button><button className="button button-primary download-button" onClick={() => void download()} disabled={!pdf || !!busy}><ArrowDownToLine size={16} /><span>Herunterladen</span></button></div>
         </div>
         <div className="editor-toolbar"><div className="tool-group">{tools.map(t => <button key={t.id} title={t.name} className={`tool-button ${tool === t.id ? 'active' : ''}`} aria-label={t.name} aria-pressed={tool === t.id} onClick={() => chooseTool(t.id)} disabled={!!busy}><t.icon size={18} strokeWidth={1.7} /><span>{t.name}</span></button>)}</div><div className="history-buttons"><button title="Rückgängig" aria-label="Rückgängig" onClick={undo} disabled={(!history.length && !nativeDirty && !markDirty) || !!busy}><Undo2 size={18} /></button><button title="Wiederholen" aria-label="Wiederholen" onClick={redo} disabled={!future.length || nativeDirty || markDirty || !!busy}><Redo2 size={18} /></button></div></div>
         <div className="editor-body">
-          {pdf && <aside className="pages-sidebar"><div className="sidebar-title"><LayoutGrid size={14} /> Seiten <span>{pages.length}</span></div><div className="thumbnails">{pages.map((p, i) => <button className={`thumbnail ${activePage === i ? 'selected' : ''}`} key={p.id} onClick={() => setActivePage(i)} aria-label={`Seite ${i + 1}`} disabled={!!busy}><div><PDFCanvas pdf={viewPdf!} page={p.source} width={100} />{(p.marks.length > 0 || Object.keys(p.replacements).length > 0) && <span className="edited-dot" />}</div><span>{i + 1}</span></button>)}</div><div className="page-actions"><button title="Seite nach vorne" aria-label="Seite nach vorne" onClick={() => movePage(-1)} disabled={activePage === 0 || !!busy}><ArrowUp size={16} /></button><button title="Seite nach hinten" aria-label="Seite nach hinten" onClick={() => movePage(1)} disabled={activePage === pages.length - 1 || !!busy}><ArrowDown size={16} /></button><button title="Seite löschen" aria-label="Seite löschen" disabled={pages.length <= 1 || !!busy} onClick={() => { commit(pages.filter((_, i) => i !== activePage)); setActivePage(Math.max(0, activePage - 1)) }}><Trash2 size={15} /></button></div></aside>}
+          {pdf && <aside className="pages-sidebar"><div className="sidebar-title"><LayoutGrid size={14} /> Seiten <span>{pages.length}</span></div><div className="thumbnails">{pages.map((p, i) => <button className={`thumbnail ${activePage === i ? 'selected' : ''}`} key={p.id} onClick={() => { setActivePage(i); setMobilePane('document') }} aria-label={`Seite ${i + 1}`} disabled={!!busy}><div><PDFCanvas pdf={viewPdf!} page={p.source} width={100} />{(p.marks.length > 0 || Object.keys(p.replacements).length > 0) && <span className="edited-dot" />}</div><span>{i + 1}</span></button>)}</div><div className="page-actions"><button title="Seite nach vorne" aria-label="Seite nach vorne" onClick={() => movePage(-1)} disabled={activePage === 0 || !!busy}><ArrowUp size={16} /></button><button title="Seite nach hinten" aria-label="Seite nach hinten" onClick={() => movePage(1)} disabled={activePage === pages.length - 1 || !!busy}><ArrowDown size={16} /></button><button title="Seite löschen" aria-label="Seite löschen" disabled={pages.length <= 1 || !!busy} onClick={() => { commit(pages.filter((_, i) => i !== activePage)); setActivePage(Math.max(0, activePage - 1)) }}><Trash2 size={15} /></button></div></aside>}
           <div className={`workspace ${dragOver ? 'dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!busy) setDragOver(true) }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }} onDrop={e => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file && !busy) void loadFile(file) }}>
             {!pdf ? <div className="upload-view"><div className="upload-zone"><FileText className="upload-file-icon" size={45} strokeWidth={1} /><h1>PDF öffnen</h1><p>Datei hier ablegen</p><button className="button button-primary upload-button" disabled={!!busy} onClick={() => fileRef.current?.click()}><Plus size={18} /> PDF auswählen <ArrowUpRight size={16} /></button><span className="upload-limit">Max. 50 MB</span></div><button className="demo-button" disabled={!!busy} onClick={() => void loadDemo()}><FileText size={14} />Testdokument laden</button></div> : <div className="page-scroll">
               <div className="preview-heading"><span className="live-indicator" role="status" aria-label={previewUpdating ? "Vorschau wird aktualisiert" : previewVersion === textEditsKey ? "Live-Vorschau aktuell" : "Vorschau nicht aktuell"}>{previewUpdating ? <LoaderCircle size={12} className="spin" /> : <span className={previewVersion === textEditsKey ? undefined : "live-stale"} />}Live-Vorschau</span><div className="page-label"><button aria-label="Vorherige Seite" disabled={activePage === 0 || !!busy} onClick={() => setActivePage(p => p - 1)}>‹</button> SEITE {activePage + 1} <span>/{pages.length}</span> <button aria-label="Nächste Seite" disabled={activePage === pages.length - 1 || !!busy} onClick={() => setActivePage(p => p + 1)}>›</button></div></div>
               <div className={`pdf-surface cursor-${tool}`} ref={surfaceRef} data-preview-version={previewVersion} aria-busy={previewUpdating} style={{ width: displayWidth, height: displayHeight }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { gesture.current = null; setLive(null) }}>
                 <PDFCanvas pdf={viewPdf!} page={current!.source} width={displayWidth} describe />
                 <svg className="annotation-layer" viewBox={`0 0 ${pageDims.width} ${pageDims.height}`} aria-label="PDF-Bearbeitungen">
-                  {(tool === 'edit' || tool === 'select') && nativeTexts.filter(t => current!.replacements[t.id]?.text !== '').map(t => <rect key={`native-${t.id}`} className={`existing-text-box ${nativeForm?.id === t.id ? 'is-selected' : ''}`} x={t.x - 2} y={t.y - 2} width={Math.max(4, t.w + 4)} height={Math.max(8, t.h + 4)} fill="transparent" role="button" tabIndex={0} aria-label={`Text bearbeiten: ${current!.replacements[t.id]?.text ?? t.text}`} onPointerDown={e => { e.stopPropagation(); setSelected(null); setNativeForm(current!.replacements[t.id] ?? { id: t.id, text: t.text, size: t.size, color: t.color }) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(null); setNativeForm(current!.replacements[t.id] ?? { id: t.id, text: t.text, size: t.size, color: t.color }) } }} />)}
+                  {(tool === 'edit' || tool === 'select') && nativeTexts.filter(t => current!.replacements[t.id]?.text !== '').map(t => <rect key={`native-${t.id}`} className={`existing-text-box ${nativeForm?.id === t.id ? 'is-selected' : ''}`} x={t.x - 2} y={t.y - 2} width={Math.max(4, t.w + 4)} height={Math.max(8, t.h + 4)} fill="transparent" role="button" tabIndex={0} aria-label={`Text bearbeiten: ${current!.replacements[t.id]?.text ?? t.text}`} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setSelected(null); setNativeForm(current!.replacements[t.id] ?? { id: t.id, text: t.text, size: t.size, color: t.color }) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(null); setNativeForm(current!.replacements[t.id] ?? { id: t.id, text: t.text, size: t.size, color: t.color }) } }} />)}
                   {marks.map(m => {
                     const x = m.x * pageDims.width, y = m.y * pageDims.height, w = m.w * pageDims.width, h = m.h * pageDims.height
                     const common = { onPointerDown: (e: ReactPointerEvent<SVGElement>) => selectMark(e, m), style: { pointerEvents: tool === 'select' ? 'auto' as const : 'none' as const, cursor: 'move' } }
@@ -379,7 +400,7 @@ function App() {
           </div>
           <aside className="properties-sidebar"><div className="sidebar-title">Eigenschaften</div><div className="properties-content">
             <div className="property-tool"><span><activeTool.icon size={20} /></span><h3>{nativeForm ? 'Vorhandener Text' : selectedMark ? 'Element bearbeiten' : activeTool.name}</h3></div>
-            {nativeForm && <div className="native-edit-form"><label className="property-field">Vorhandener Text<textarea value={nativeForm.text} onChange={e => { setNativeForm({ ...nativeForm, text: e.target.value }); setError('') }} rows={5} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyNativeText() } }} /></label><div className="draft-actions"><button className="button button-primary apply-text" disabled={!!busy || !nativeDirty} onClick={() => applyNativeText()}><Check size={15} />Übernehmen</button><button className="button button-secondary" disabled={!!busy} onClick={() => setNativeForm(null)}>Abbrechen</button></div></div>}
+            {nativeForm && <div className="native-edit-form"><label className="property-field">Vorhandener Text<textarea value={nativeForm.text} onChange={e => { setNativeForm({ ...nativeForm, text: e.target.value }); setError('') }} rows={5} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyNativeText() } }} /></label><div className="draft-actions"><button className="button button-primary apply-text" disabled={!!busy || !nativeDirty} onClick={() => { applyNativeText(); setMobilePane('document') }}><Check size={15} />Übernehmen</button><button className="button button-secondary" disabled={!!busy} onClick={() => { setNativeForm(null); setMobilePane('document') }}>Abbrechen</button></div></div>}
             {selectedMark?.type === 'text' && <label className="property-field">Dein Text<textarea key={selectedMark.id} value={markTextDraft?.id === selectedMark.id ? markTextDraft.text : selectedMark.text ?? ''} onChange={e => setMarkTextDraft({ id: selectedMark.id, text: e.target.value })} onBlur={finishMarkText} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) e.currentTarget.blur() }} placeholder="Text" rows={3} /></label>}
             {(nativeForm || selectedMark?.type !== 'image') && (tool !== 'edit' || nativeForm) && <div className="property-field"><label>Farbe</label><div className="color-options">{colors.map(c => <button key={c} style={{ '--swatch': c } as CSSProperties} className={`color-swatch ${(nativeForm?.color ?? selectedMark?.color ?? color) === c ? 'chosen' : ''}`} aria-label={`Farbe ${c}`} aria-pressed={(nativeForm?.color ?? selectedMark?.color ?? color) === c} onClick={() => { if (nativeForm) setNativeForm({ ...nativeForm, color: c }); else { setColor(c); if (selectedMark) updateMark(selectedMark.id, { color: c }) } }}>{(nativeForm?.color ?? selectedMark?.color ?? color) === c && <Check size={12} />}</button>)}<label className="custom-color" title="Eigene Farbe"><Plus size={13} /><input type="color" value={nativeForm?.color ?? selectedMark?.color ?? color} aria-label="Eigene Farbe" onChange={e => { if (nativeForm) setNativeForm({ ...nativeForm, color: e.target.value }); else { setColor(e.target.value); if (selectedMark) updateMark(selectedMark.id, { color: e.target.value }) } }} /></label></div></div>}
             {(nativeForm || selectedMark?.type === 'text' || selectedMark?.type === 'draw' || tool === 'text' || tool === 'draw') && <div className="property-field"><label htmlFor="text-size">{tool === 'draw' || selectedMark?.type === 'draw' ? 'Strichstärke' : 'Schriftgröße'}</label><div className="size-control"><Type size={15} /><select id="text-size" value={nativeForm?.size ?? selectedMark?.size ?? size} onChange={e => { if (nativeForm) setNativeForm({ ...nativeForm, size: Number(e.target.value) }); else { setSize(Number(e.target.value)); if (selectedMark) updateMark(selectedMark.id, { size: Number(e.target.value) }) } }}>{[...new Set([10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, nativeForm?.size ?? selectedMark?.size ?? size])].sort((a, b) => a - b).map(n => <option key={n} value={n}>{Math.round(n * 100) / 100}</option>)}</select><span>pt</span><ChevronDown size={13} /></div></div>}
@@ -389,7 +410,8 @@ function App() {
             {!nativeForm && <p className="tool-instruction">{!pdf ? 'PDF öffnen, um zu bearbeiten.' : tool === 'edit' && nativeLoading ? 'Text wird erkannt …' : tool === 'edit' && !nativeTexts.length ? 'Kein bearbeitbarer Text erkannt. Für gescannte Seiten ist OCR nötig.' : activeTool.hint}</p>}
           </div></aside>
         </div>
-        <div className="editor-statusbar"><span>{pdf ? `${pages.length} ${pages.length === 1 ? 'Seite' : 'Seiten'}` : 'Keine Datei'}</span><div className="zoom-controls"><button aria-label="Verkleinern" onClick={() => setZoom(z => Math.max(25, z - 10))} disabled={!pdf || zoom <= 25}><Minus size={14} /></button><span>{pdf ? `${zoom} %` : '100 %'}</span><button aria-label="Vergrößern" onClick={() => setZoom(z => Math.min(200, z + 10))} disabled={!pdf || zoom >= 200}><Plus size={14} /></button><span className="zoom-divider" /><button aria-label="Seite einpassen" title="Seite einpassen" disabled={!pdf} onClick={() => { const container = surfaceRef.current?.parentElement?.parentElement; if (container) setZoom(Math.max(25, Math.min(200, Math.floor((container.clientWidth - 72) / pageDims.width * 100)))) }}><Maximize size={14} /></button></div></div>
+        {pdf && <MobilePaneNav label="Editoransicht" value={mobilePane} onChange={setMobilePane} items={[{ id: 'document', label: 'Dokument' }, { id: 'properties', label: 'Eigenschaften' }, { id: 'pages', label: 'Seiten' }]} />}
+        <div className="editor-statusbar"><span>{pdf ? `${pages.length} ${pages.length === 1 ? 'Seite' : 'Seiten'}` : 'Keine Datei'}</span><div className="zoom-controls"><button aria-label="Verkleinern" onClick={() => { setAutoFit(false); setZoom(z => Math.max(25, z - 10)) }} disabled={!pdf || zoom <= 25}><Minus size={14} /></button><span>{pdf ? `${zoom} %` : '100 %'}</span><button aria-label="Vergrößern" onClick={() => { setAutoFit(false); setZoom(z => Math.min(200, z + 10)) }} disabled={!pdf || zoom >= 200}><Plus size={14} /></button><span className="zoom-divider" /><button aria-label="Seite einpassen" title="Seite einpassen" disabled={!pdf} onClick={() => { setAutoFit(true); const container = surfaceRef.current?.parentElement?.parentElement; if (container) setZoom(Math.max(25, Math.min(200, Math.floor((container.clientWidth - 72) / pageDims.width * 100)))) }}><Maximize size={14} /></button></div></div>
       </section></div>
       <div id="converter-panel" role="tabpanel" aria-labelledby="convert-tab" hidden={workspace !== 'convert'}>{converterVisited && <Suspense fallback={<div className="converter-loading" role="status">Konverter wird geladen …</div>}><ConversionPanel visible={workspace === 'convert'} onEditorFile={pdf ? createEditorFile : undefined} onOpenEditor={file => { setWorkspace('edit'); void loadFile(file) }} /></Suspense>}</div>
       <div id="merge-panel" role="tabpanel" aria-labelledby="merge-tab" hidden={workspace !== 'merge'}>{mergeVisited && <Suspense fallback={<div className="converter-loading" role="status">PDF-Werkzeug wird geladen …</div>}><MergePanel visible={workspace === 'merge'} onEditorFile={pdf ? createEditorFile : undefined} onOpenEditor={file => { setWorkspace('edit'); void loadFile(file) }} /></Suspense>}</div>

@@ -1,3 +1,4 @@
+import { MobilePaneNav } from './MobilePaneNav'
 import { useEffect, useRef, useState } from 'react'
 import { animate, createScope } from 'animejs'
 import { ArrowDown, ArrowDownToLine, ArrowUp, FileStack, FileText, LoaderCircle, Plus, Trash2, X } from 'lucide-react'
@@ -13,6 +14,7 @@ import './MergePanel.css'
 type Props = { visible: boolean; onEditorFile?: () => Promise<File>; onOpenEditor: (file: File) => void }
 
 export default function MergePanel({ visible, onEditorFile, onOpenEditor }: Props) {
+  const [mobilePane, setMobilePane] = useState<'files' | 'options'>('files')
   const root = useRef<HTMLDivElement>(null), inputRef = useRef<HTMLInputElement>(null), operation = useRef<AbortController | null>(null), mounted = useRef(true)
   const [inputs, setInputs] = useState<MergeInput[]>([]), [result, setResult] = useState<Uint8Array | null>(null)
   const [preview, setPreview] = useState<PDFDocumentProxy | null>(null), [name, setName] = useState('Kombiniert')
@@ -55,9 +57,10 @@ export default function MergePanel({ visible, onEditorFile, onOpenEditor }: Prop
   }
   const total = inputs.reduce((sum, p) => sum + p.pages, 0)
   const filename = (name.trim().replace(/\.pdf$/i, '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') || 'Kombiniert') + '.pdf'
-  return <section className="converter merge-panel" aria-label="PDFs kombinieren" ref={root}>
+  return <section data-mobile-pane={mobilePane} className="converter merge-panel" aria-label="PDFs kombinieren" ref={root}>
     <input ref={inputRef} type="file" accept="application/pdf,.pdf" multiple hidden aria-label="PDFs zum Kombinieren" onChange={e => addFiles(Array.from(e.target.files ?? []))} />
     <div className="converter-heading"><h1>PDFs kombinieren</h1><button className="button button-secondary" disabled={!!busy} onClick={() => inputRef.current?.click()}><Plus size={18} />PDFs hinzufügen</button></div>
+    <MobilePaneNav label="Kombinationsansicht" value={mobilePane} onChange={setMobilePane} items={[{ id: 'files', label: 'Dateien & Vorschau' }, { id: 'options', label: 'Einstellungen' }]} />
     <div className="converter-content" aria-busy={!!busy}>
       <div className="conversion-layout"><div className={`conversion-workspace merge-workspace ${dragging ? 'conversion-dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!busy) setDragging(true) }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }} onDrop={e => { e.preventDefault(); setDragging(false); if (!busy) addFiles(Array.from(e.dataTransfer.files)) }}>
         {!inputs.length ? <div className="conversion-empty"><FileStack size={48} strokeWidth={1} /><h2>PDFs zusammenführen</h2><p>Dateien auswählen oder hier ablegen</p><button className="button button-primary" disabled={!!busy} onClick={() => inputRef.current?.click()}><Plus size={18} />PDFs auswählen</button><small>Max. 30 PDFs · 50 MB je PDF · 100 MB gesamt</small></div> : <><ol className="merge-file-list">{inputs.map((item, i) => <li key={item.id}><span className="merge-number">{i + 1}</span><FileText size={23} /><div className="merge-file-name"><strong title={item.file.name}>{item.file.name}</strong><span>{item.pages} {item.pages === 1 ? 'Seite' : 'Seiten'} · {(item.file.size / 1024 / 1024).toFixed(2).replace('.', ',')} MB</span></div><div className="merge-file-actions"><button aria-label={`PDF ${i + 1} nach vorne`} disabled={!i || !!busy} onClick={() => move(i, -1)}><ArrowUp size={19} /></button><button aria-label={`PDF ${i + 1} nach hinten`} disabled={i === inputs.length - 1 || !!busy} onClick={() => move(i, 1)}><ArrowDown size={19} /></button><button aria-label={`PDF ${i + 1} entfernen`} disabled={!!busy} onClick={() => { setInputs(list => list.filter(p => p.id !== item.id)); setResult(null) }}><Trash2 size={18} /></button></div></li>)}</ol>{result && preview && <figure className="photo-result merge-result" aria-label="Kombinierte PDF-Vorschau"><figcaption>Kombinierte PDF · {preview.numPages} Seiten</figcaption><PdfPreview pdf={preview} /></figure>}</>}
