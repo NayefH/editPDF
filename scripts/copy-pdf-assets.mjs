@@ -11,3 +11,4 @@ await mkdir(licenses, { recursive: true })
 for (const [source, target] of [['LICENSE', 'embedpdf.txt'], ['LICENSE.pdfium', 'pdfium.txt']]) {
   await cp(new URL(`node_modules/@embedpdf/pdfium/${source}`, root), new URL(target, licenses))
 }
+await cp(new URL('node_modules/animejs/LICENSE.md', root), new URL('animejs.txt', licenses))

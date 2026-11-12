@@ -7,6 +7,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { NativeText, TextEdit, PageTextEdits } from './native-pdf'
 import { embedTextFont } from './text-font'
+import { useEditorMotion } from './useEditorMotion'
 import './App.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
@@ -57,6 +58,7 @@ function PDFCanvas({ pdf, page, width, describe = false }: { pdf: PDFDocumentPro
 }
 
 function App() {
+  const rootRef = useRef<HTMLDivElement>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
   const [fileName, setFileName] = useState('')
@@ -114,6 +116,7 @@ function App() {
   const textEdits: PageTextEdits[] = livePages.filter(p => Object.keys(p.replacements).length).map(p => ({ source: p.source, edits: Object.values(p.replacements) }))
   const textEditsKey = JSON.stringify(textEdits)
   const viewPdf = previewPdf ?? pdf
+  useEditorMotion(rootRef, { tool, documentKey: pdf?.fingerprints[0] ?? '', page: activePage, dialog: help ? 'help' : pendingFile ? 'replace' : '', notice: notice || error, dragOver, previewVersion })
 
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer) }, [notice])
   useEffect(() => {
@@ -181,7 +184,12 @@ function App() {
     setFuture(f => [pages, ...f]); setPages(history[history.length - 1]!); setHistory(h => h.slice(0, -1)); setSelected(null); setNativeForm(null)
     setActivePage(p => Math.min(p, history[history.length - 1]!.length - 1))
   }
-  function redo() { if (!future.length) return; setHistory(h => [...h, pages]); setPages(future[0]!); setFuture(f => f.slice(1)); setSelected(null); setNativeForm(null) }
+  function redo() {
+    if (!future.length) return
+    const next = future[0]!
+    setHistory(h => [...h, pages]); setPages(next); setFuture(f => f.slice(1)); setSelected(null); setNativeForm(null)
+    setActivePage(p => Math.min(p, next.length - 1))
+  }
   function applyNativeText(replacement = nativeForm) {
     if (!replacement) return
     setError('')
@@ -349,7 +357,7 @@ function App() {
   function chooseTool(next: Tool) { setTool(next); setSelected(null); setNativeForm(null); if (next === 'highlight') setColor('#bcff00'); if (next === 'image' && pdf) imageRef.current?.click() }
   const marks = [...(livePages[activePage]?.marks.filter(m => m.id !== draft?.id) ?? []), ...(draft ? [draft] : [])]
 
-  return <div className="app-shell">
+  return <div className="app-shell" ref={rootRef}>
     <input ref={fileRef} type="file" accept="application/pdf,.pdf" hidden onChange={e => { const file = e.target.files?.[0]; if (file) void loadFile(file) }} />
     <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => void readImage(e.target.files?.[0])} />
     <header className="site-header">
@@ -367,7 +375,7 @@ function App() {
           {pdf && <aside className="pages-sidebar"><div className="sidebar-title"><LayoutGrid size={14} /> Seiten <span>{pages.length}</span></div><div className="thumbnails">{pages.map((p, i) => <button className={`thumbnail ${activePage === i ? 'selected' : ''}`} key={p.id} onClick={() => setActivePage(i)} aria-label={`Seite ${i + 1}`} disabled={!!busy}><div><PDFCanvas pdf={viewPdf!} page={p.source} width={100} />{(p.marks.length > 0 || Object.keys(p.replacements).length > 0) && <span className="edited-dot" />}</div><span>{i + 1}</span></button>)}</div><div className="page-actions"><button title="Seite nach vorne" aria-label="Seite nach vorne" onClick={() => movePage(-1)} disabled={activePage === 0 || !!busy}><ArrowUp size={16} /></button><button title="Seite nach hinten" aria-label="Seite nach hinten" onClick={() => movePage(1)} disabled={activePage === pages.length - 1 || !!busy}><ArrowDown size={16} /></button><button title="Seite löschen" aria-label="Seite löschen" disabled={pages.length <= 1 || !!busy} onClick={() => { commit(pages.filter((_, i) => i !== activePage)); setActivePage(Math.max(0, activePage - 1)) }}><Trash2 size={15} /></button></div></aside>}
           <div className={`workspace ${dragOver ? 'dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!busy) setDragOver(true) }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }} onDrop={e => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file && !busy) void loadFile(file) }}>
             {!pdf ? <div className="upload-view"><div className="upload-zone"><FileText className="upload-file-icon" size={45} strokeWidth={1} /><h1>PDF öffnen</h1><p>Datei hier ablegen</p><button className="button button-primary upload-button" disabled={!!busy} onClick={() => fileRef.current?.click()}><Plus size={18} /> PDF auswählen <ArrowUpRight size={16} /></button><span className="upload-limit">Max. 50 MB</span></div><button className="demo-button" disabled={!!busy} onClick={() => void loadDemo()}><FileText size={14} />Testdokument laden</button></div> : <div className="page-scroll">
-              <div className="preview-heading"><span className="live-indicator" role="status" aria-label={previewUpdating ? "Vorschau wird aktualisiert" : "Live-Vorschau aktuell"}>{previewUpdating ? <LoaderCircle size={12} className="spin" /> : <span />}Live-Vorschau</span><div className="page-label"><button aria-label="Vorherige Seite" disabled={activePage === 0 || !!busy} onClick={() => setActivePage(p => p - 1)}>‹</button> SEITE {activePage + 1} <span>/{pages.length}</span> <button aria-label="Nächste Seite" disabled={activePage === pages.length - 1 || !!busy} onClick={() => setActivePage(p => p + 1)}>›</button></div></div>
+              <div className="preview-heading"><span className="live-indicator" role="status" aria-label={previewUpdating ? "Vorschau wird aktualisiert" : previewVersion === textEditsKey ? "Live-Vorschau aktuell" : "Vorschau nicht aktuell"}>{previewUpdating ? <LoaderCircle size={12} className="spin" /> : <span className={previewVersion === textEditsKey ? undefined : "live-stale"} />}Live-Vorschau</span><div className="page-label"><button aria-label="Vorherige Seite" disabled={activePage === 0 || !!busy} onClick={() => setActivePage(p => p - 1)}>‹</button> SEITE {activePage + 1} <span>/{pages.length}</span> <button aria-label="Nächste Seite" disabled={activePage === pages.length - 1 || !!busy} onClick={() => setActivePage(p => p + 1)}>›</button></div></div>
               <div className={`pdf-surface cursor-${tool}`} ref={surfaceRef} data-preview-version={previewVersion} aria-busy={previewUpdating} style={{ width: displayWidth, height: displayHeight }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { gesture.current = null; setLive(null) }}>
                 <PDFCanvas pdf={viewPdf!} page={current!.source} width={displayWidth} describe />
                 <svg className="annotation-layer" viewBox={`0 0 ${pageDims.width} ${pageDims.height}`} aria-label="PDF-Bearbeitungen">

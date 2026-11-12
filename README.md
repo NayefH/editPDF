@@ -33,3 +33,14 @@ Playwright erwartet eine laufende Anwendung unter `http://127.0.0.1:5175`. Mit `
 Die Tests prüfen Dateiimport, Text, Markierungen, Zeichnungen, Rückgängig/Wiederholen, PDF-Download, Seitenverwaltung und mobile Darstellung. Beim Ersetzen bestehenden Textes wird unabhängig mit PDF.js geprüft, dass der alte Text fehlt und der neue extrahierbar ist. Das gilt auch für gedrehte Seiten mit CropBox und Text in eingebetteten PDF-Seiten.
 
 Weitere Tests prüfen die tatsächlich gerenderte Live-PDF beim Tippen, das Verwerfen von Entwürfen, Downloads ohne vorheriges Übernehmen sowie deutsche Zeichen in bestehenden Teilschriften und neu eingefügten Texten.
+
+Anime.js 4 animiert das Öffnen der Oberfläche, Werkzeug-Icons, Dokument- und Dialogwechsel sowie die Live-Anzeige. Die Animationen verändern keine PDF-Koordinaten und werden bei `prefers-reduced-motion: reduce` deaktiviert, auch wenn die Einstellung während der Nutzung wechselt. Die Bedienelemente verwenden größere Schrift; responsive Tests decken 360, 768 und 1440 Pixel Breite ab.
+
+Die vollständige Funktionssuite prüft zusätzlich Größenlimits, Passwortschutz, Drag-and-drop, PNG/JPG/WebP, Skalieren und Verschieben, Farben und Schriftgrößen, Seitenreihenfolge im tatsächlichen Download, Zoom-Grenzen, Scan-Hinweise, Fehlerbehebung sowie Anime.js und reduzierte Bewegung. Sie kann gegen das Produktionsbuild ausgeführt werden:
+
+```sh
+npm run build
+npx vite preview --host 127.0.0.1 --port 5175 --strictPort
+# In einem zweiten Terminal:
+npm test
+```
