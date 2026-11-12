@@ -12,3 +12,4 @@ for (const [source, target] of [['LICENSE', 'embedpdf.txt'], ['LICENSE.pdfium', 
   await cp(new URL(`node_modules/@embedpdf/pdfium/${source}`, root), new URL(target, licenses))
 }
 await cp(new URL('node_modules/animejs/LICENSE.md', root), new URL('animejs.txt', licenses))
+await cp(new URL('node_modules/fflate/LICENSE', root), new URL('fflate.txt', licenses))

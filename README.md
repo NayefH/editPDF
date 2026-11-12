@@ -2,6 +2,15 @@
 
 Ein flacher PDF-Editor in Neongrün auf Schwarz. React, TypeScript und Vite.
 
+## Konvertieren
+
+Der Bereich **Konvertieren** ergänzt den Editor um zwei Abläufe. Beim Wechseln zwischen den Bereichen bleiben das geöffnete Dokument, der Live-Entwurf und die Fotoauswahl erhalten.
+
+- **PDF → PNG, JPG oder TXT:** PDF auswählen oder die geöffnete, bearbeitete PDF aus dem Editor übernehmen. Seitenbereiche wie `1-3, 5` sind möglich. Bilder lassen sich mit 72, 150 oder 300 dpi ausgeben; mehrere Seiten werden als ZIP heruntergeladen. TXT übernimmt die vorhandene Textebene einschließlich deutscher Zeichen und ersetzt keine OCR.
+- **Fotos → PDF:** JPG/JPEG, PNG, WebP und AVIF auswählen oder ablegen, Reihenfolge ändern und Fotos drehen. A4 mit automatischer, Hoch- oder Querformat-Ausrichtung sowie ein zum Bild passendes Seitenformat sind verfügbar. Ränder: 0, 10 oder 20 mm. Die Vorschau zeigt die erzeugte PDF; sie kann heruntergeladen oder direkt im Editor geöffnet werden. JPEG-EXIF-Ausrichtung wird berücksichtigt.
+
+Grenzen für die Konvertierung: PDF-Dateien bis 50 MB und bis zu 100 ausgewählte Seiten pro Export; höchstens 50 Fotos mit je 20 MB und zusammen 100 MB. Große Fotos werden für die Verarbeitung auf höchstens 16 Megapixel beziehungsweise 6000 Pixel Kantenlänge verkleinert. Die Verarbeitung bleibt lokal im Browser und lässt sich abbrechen. Die neue Oberfläche verwendet etwa 16 px für Bedienelemente und 18 px für Eingaben.
+
 ## Starten
 
 ```sh
@@ -37,6 +46,8 @@ Weitere Tests prüfen die tatsächlich gerenderte Live-PDF beim Tippen, das Verw
 Anime.js 4 animiert das Öffnen der Oberfläche, Werkzeug-Icons, Dokument- und Dialogwechsel sowie die Live-Anzeige. Die Animationen verändern keine PDF-Koordinaten und werden bei `prefers-reduced-motion: reduce` deaktiviert, auch wenn die Einstellung während der Nutzung wechselt. Die Bedienelemente verwenden größere Schrift; responsive Tests decken 360, 768 und 1440 Pixel Breite ab.
 
 Die vollständige Funktionssuite prüft zusätzlich Größenlimits, Passwortschutz, Drag-and-drop, PNG/JPG/WebP, Skalieren und Verschieben, Farben und Schriftgrößen, Seitenreihenfolge im tatsächlichen Download, Zoom-Grenzen, Scan-Hinweise, Fehlerbehebung sowie Anime.js und reduzierte Bewegung. Sie kann gegen das Produktionsbuild ausgeführt werden:
+
+`tests/conversion.spec.ts` ergänzt Prüfungen für tatsächliche PNG-/JPG-/TXT-/ZIP-Ausgaben, Foto-PDFs, EXIF-Ausrichtung, AVIF, Seitenformate, Ränder, Reihenfolge, Vorschau, Abbrechen sowie die Übernahme bearbeiteter Dokumente und responsive Ansichten.
 
 ```sh
 npm run build

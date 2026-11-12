@@ -2,7 +2,7 @@
 
 Stand: 12. November 2026. Getestet wurde das lokale Produktionsbuild in installiertem Google Chrome unter Windows mit Playwright.
 
-**Ergebnis: 36 Tests erfolgreich, 0 fehlgeschlagen, 0 übersprungen, 0 instabile Tests. Laufzeit der abschließenden Suite: rund 91 Sekunden. TypeScript-Prüfung und Produktionsbuild erfolgreich.**
+**Ergebnis: 53 Tests erfolgreich, 0 fehlgeschlagen, 0 übersprungen, 0 instabile Tests. Laufzeit der abschließenden Suite: rund 116 Sekunden. TypeScript-Prüfung und Produktionsbuild erfolgreich.**
 
 | Bereich | Geprüfte Abläufe |
 | --- | --- |
@@ -19,8 +19,14 @@ Stand: 12. November 2026. Getestet wurde das lokale Produktionsbuild in installi
 | Scans | OCR-Hinweis bei fehlender Textebene; Ergänzen neuer Texte weiterhin möglich |
 | Hilfe und Anime.js | Dialog öffnen, Schließen über Schaltfläche, Symbol und Hintergrund; tatsächlich laufende Anime.js-Animation; reduzierte Bewegung einschließlich Umschalten während einer Animation |
 | Lesbarkeit | Größere Schrift in Schaltflächen und Eingabefeldern; responsive Ansichten bei 360, 768 und 1440 Pixel Breite ohne horizontalen Überlauf |
+| PDF-Konvertierung | PNG- und JPG-Ausgaben, DPI, Seitenwahl und Bereichsvalidierung, deutsche Zeichen in TXT, ZIP-Ausgabe mehrerer Seiten, OCR-Hinweis bei fehlender Textebene, Abbrechen |
+| Foto-PDFs | JPG/JPEG, PNG, WebP und AVIF; Reihenfolge, Drehung, JPEG-EXIF-Ausrichtung, A4, Hochformat, Bildformat, 0-/20-mm-Ränder, Farbkontrolle der tatsächlich gerenderten PDF-Vorschau, mehrseitiger Download |
+| Bereichswechsel | Foto-PDF im Editor öffnen; bearbeitete Editor-PDF inklusive Live-Entwurf im Konverter übernehmen; Fotoauswahl und Editorzustand beim Wechsel erhalten |
+| Grenzen und Konverteransicht | Ungültige und defekte Fotos, 20-MB-Fotogrenze, höchstens 50 Fotos, höchstens 100 exportierte Seiten, größere Eingabeschrift und responsive Ansichten bei 360/768/1440 Pixel |
 
 Heruntergeladene Dateien wurden mit PDF.js beziehungsweise pdf-lib unabhängig von der Editoroberfläche auf Textinhalt, Seitenzahl, Seitenreihenfolge und PDF-Geometrie geprüft. Bei den erweiterten Funktionstests werden unbehandelte Browserfehler ebenfalls als Testfehler gewertet.
+
+Die Konvertierungsprüfungen lesen zusätzlich PNG-Abmessungen und Dateisignaturen, entpacken ZIP-Ausgaben mit fflate und kontrollieren JPG-Signaturen. Bei Foto-PDFs werden Seitenformate und Bildreihenfolge anhand der tatsächlichen PDF-Vorschau geprüft. Die neue Konvertierung enthält keine Word-/Excel-Ausgabe und keine automatische OCR; die unterstützten Zielformate sind PNG, JPG, TXT und PDF aus Fotos.
 
 ## Gefundene und behobene Fehler
 
@@ -41,4 +47,4 @@ npx vite preview --host 127.0.0.1 --port 5175 --strictPort
 npm test
 ```
 
-Testquellen: `tests/editor.spec.ts` und `tests/functions.spec.ts`. Maschinenlesbares Ergebnis der Prüfung: `test-results/results.json` (lokal erzeugt und nicht im Repository gespeichert).
+Testquellen: `tests/editor.spec.ts`, `tests/functions.spec.ts` und `tests/conversion.spec.ts`. Maschinenlesbares Ergebnis der Prüfung: `test-results/results.json` (lokal erzeugt und nicht im Repository gespeichert).

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, CSSProperties } from 'react'
 import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpRight, Check, CheckCheck, ChevronDown, CircleHelp, FilePlus2, FileText, Highlighter, ImagePlus, LayoutGrid, LoaderCircle, Maximize, Minus, MousePointer2, Pencil, Plus, Redo2, Square, TextCursorInput, Trash2, Type, Undo2, Upload, X } from 'lucide-react'
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
@@ -8,7 +8,10 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { NativeText, TextEdit, PageTextEdits } from './native-pdf'
 import { embedTextFont } from './text-font'
 import { useEditorMotion } from './useEditorMotion'
+import { PDFCanvas } from './PDFCanvas'
+import { downloadBlob } from './conversion'
 import './App.css'
+const ConversionPanel = lazy(() => import('./ConversionPanel'))
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 type Tool = 'edit' | 'select' | 'text' | 'highlight' | 'draw' | 'rectangle' | 'image'
@@ -29,36 +32,11 @@ const tools = [
 const colors = ['#111111', '#bcff00', '#00bcff', '#00b980', '#f0bf00', '#ff4b8b']
 const uid = () => crypto.randomUUID()
 
-function PDFCanvas({ pdf, page, width, describe = false }: { pdf: PDFDocumentProxy; page: number; width: number; describe?: boolean }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [error, setError] = useState(false)
-  const [renderedText, setRenderedText] = useState('')
-  useEffect(() => {
-    let cancelled = false
-    let render: ReturnType<pdfjs.PDFPageProxy['render']> | undefined
-    setError(false); setRenderedText('')
-    void pdf.getPage(page + 1).then(async p => {
-      if (cancelled || !canvasRef.current) return
-      const base = p.getViewport({ scale: 1 })
-      const viewport = p.getViewport({ scale: width / base.width })
-      const canvas = canvasRef.current
-      const ratio = Math.min(window.devicePixelRatio || 1, 2)
-      canvas.width = Math.ceil(viewport.width * ratio); canvas.height = Math.ceil(viewport.height * ratio)
-      canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`
-      render = p.render({ canvas, viewport, transform: [ratio, 0, 0, ratio, 0, 0] })
-      await render.promise
-      if (describe && !cancelled) {
-        const content = await p.getTextContent()
-        if (!cancelled) setRenderedText(content.items.map(item => 'str' in item ? item.str : '').join(' '))
-      }
-    }).catch((e: Error) => { if (!cancelled && e.name !== 'RenderingCancelledException') setError(true) })
-    return () => { cancelled = true; render?.cancel() }
-  }, [pdf, page, width, describe])
-  return <><canvas ref={canvasRef} role={describe ? 'img' : undefined} aria-label={describe ? `PDF-Vorschau: ${renderedText}` : undefined} />{error && <span className="render-error">Vorschau nicht verfügbar</span>}</>
-}
 
 function App() {
   const rootRef = useRef<HTMLDivElement>(null)
+  const [workspace, setWorkspace] = useState<'edit' | 'convert'>('edit')
+  const [converterVisited, setConverterVisited] = useState(false)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
   const [fileName, setFileName] = useState('')
@@ -292,10 +270,8 @@ function App() {
     reader.readAsDataURL(file)
     if (imageRef.current) imageRef.current.value = ''
   }
-  async function download() {
-    if (!bytes || !pdf) return
-    setBusy('Deine PDF wird vorbereitet …'); setError('')
-    try {
+  async function createEditorFile(): Promise<File> {
+    if (!bytes || !pdf) throw new Error('Bitte zuerst eine PDF öffnen.')
       const { replacePdfTexts } = await import('./native-pdf')
       const editedBytes = await replacePdfTexts(bytes, textEdits)
       const source = await PDFDocument.load(editedBytes), output = await PDFDocument.create()
@@ -348,11 +324,16 @@ function App() {
         await flushOverlay()
       }
       output.setTitle(fileName.replace(/\.pdf$/i, '')); output.setCreator('EDIT//PDF'); output.setLanguage('de-DE')
-      const result = await output.save(), url = URL.createObjectURL(new Blob([result as BlobPart], { type: 'application/pdf' }))
-      const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName.replace(/\.pdf$/i, '') + '-bearbeitet.pdf'; anchor.click()
-      setTimeout(() => URL.revokeObjectURL(url), 10000); setNotice('Fertig! Deine bearbeitete PDF wurde heruntergeladen.')
-    } catch (e) { setError(e instanceof Error ? e.message : 'Die PDF konnte nicht exportiert werden.') } finally { setBusy('') }
+      return new File([await output.save() as BlobPart], fileName.replace(/\.pdf$/i, '') + '-bearbeitet.pdf', { type: 'application/pdf' })
   }
+  async function download() {
+    if (!bytes || !pdf) return
+    setBusy('Deine PDF wird vorbereitet …'); setError('')
+    try { const file = await createEditorFile(); downloadBlob(file, file.name); setNotice('Die bearbeitete PDF wurde heruntergeladen.') }
+    catch (error) { setError(error instanceof Error ? error.message : 'Die PDF konnte nicht exportiert werden.') }
+    finally { setBusy('') }
+  }
+
   function movePage(direction: number) { const target = activePage + direction; if (target < 0 || target >= pages.length) return; const next = [...pages]; [next[activePage], next[target]] = [next[target]!, next[activePage]!]; commit(next); setActivePage(target) }
   function chooseTool(next: Tool) { setTool(next); setSelected(null); setNativeForm(null); if (next === 'highlight') setColor('#bcff00'); if (next === 'image' && pdf) imageRef.current?.click() }
   const marks = [...(livePages[activePage]?.marks.filter(m => m.id !== draft?.id) ?? []), ...(draft ? [draft] : [])]
@@ -362,10 +343,13 @@ function App() {
     <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => void readImage(e.target.files?.[0])} />
     <header className="site-header">
       <a className="brand" href="./" aria-label="EDIT PDF Startseite"><span className="brand-icon"><FileText size={23} strokeWidth={1.8} /></span>EDIT<span className="brand-dot">//</span>PDF</a>
-      <nav><button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /> Hilfe</button></nav>
+      <nav className="header-nav"><div className="workspace-tabs" role="tablist" aria-label="Bereich" onKeyDown={e => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        e.preventDefault(); const next = workspace === 'edit' ? 'convert' : 'edit'; setWorkspace(next); setConverterVisited(true); document.getElementById(next + '-tab')?.focus()
+      }}><button id="edit-tab" role="tab" aria-selected={workspace === 'edit'} aria-controls="pdf-editor-panel" tabIndex={workspace === 'edit' ? 0 : -1} onClick={() => setWorkspace('edit')}>Bearbeiten</button><button id="convert-tab" role="tab" aria-selected={workspace === 'convert'} aria-controls="converter-panel" tabIndex={workspace === 'convert' ? 0 : -1} onClick={() => { setConverterVisited(true); setWorkspace('convert') }}>Konvertieren</button></div><button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /> Hilfe</button></nav>
     </header>
     <main>
-      <section className={`editor ${pdf ? 'has-document' : ''}`} aria-label="PDF-Editor">
+      <div id="pdf-editor-panel" role="tabpanel" aria-labelledby="edit-tab" hidden={workspace !== 'edit'}><section className={`editor ${pdf ? 'has-document' : ''}`} aria-label="PDF-Editor">
         <div className="editor-topbar">
           <div className="document-name"><span className="file-icon"><FileText size={18} /></span><div><strong>{fileName || 'Keine PDF geöffnet'}</strong>{pdf && <span>{pages.length} {pages.length === 1 ? 'Seite' : 'Seiten'} · {(fileSize / 1024 / 1024).toFixed(2).replace('.', ',')} MB</span>}</div></div>
           <div className="document-actions"><button className="button button-secondary" aria-label={pdf ? 'PDF wechseln' : 'PDF öffnen'} onClick={() => fileRef.current?.click()} disabled={!!busy}><Upload size={15} /><span>{pdf ? 'PDF wechseln' : 'PDF öffnen'}</span></button><button className="button button-primary download-button" onClick={() => void download()} disabled={!pdf || !!busy}><ArrowDownToLine size={16} /><span>Herunterladen</span></button></div>
@@ -403,7 +387,8 @@ function App() {
           </div></aside>
         </div>
         <div className="editor-statusbar"><span>{pdf ? `${pages.length} ${pages.length === 1 ? 'Seite' : 'Seiten'}` : 'Keine Datei'}</span><div className="zoom-controls"><button aria-label="Verkleinern" onClick={() => setZoom(z => Math.max(25, z - 10))} disabled={!pdf || zoom <= 25}><Minus size={14} /></button><span>{pdf ? `${zoom} %` : '100 %'}</span><button aria-label="Vergrößern" onClick={() => setZoom(z => Math.min(200, z + 10))} disabled={!pdf || zoom >= 200}><Plus size={14} /></button><span className="zoom-divider" /><button aria-label="Seite einpassen" title="Seite einpassen" disabled={!pdf} onClick={() => { const container = surfaceRef.current?.parentElement?.parentElement; if (container) setZoom(Math.max(25, Math.min(200, Math.floor((container.clientWidth - 72) / pageDims.width * 100)))) }}><Maximize size={14} /></button></div></div>
-      </section>
+      </section></div>
+      <div id="converter-panel" role="tabpanel" aria-labelledby="convert-tab" hidden={workspace !== 'convert'}>{converterVisited && <Suspense fallback={<div className="converter-loading" role="status">Konverter wird geladen …</div>}><ConversionPanel visible={workspace === 'convert'} onEditorFile={pdf ? createEditorFile : undefined} onOpenEditor={file => { setWorkspace('edit'); void loadFile(file) }} /></Suspense>}</div>
     </main>
     {notice && <div className="toast" role="status"><CheckCheck size={17} />{notice}<button aria-label="Meldung schließen" onClick={() => setNotice('')}><X size={15} /></button></div>}
     {error && <div className="error-toast" role="alert"><CircleHelp size={18} /><span>{error}</span><button aria-label="Fehler schließen" onClick={() => setError('')}><X size={16} /></button></div>}
