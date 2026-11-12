@@ -2,9 +2,11 @@ import { test, expect } from '@playwright/test'
 import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { readFile } from 'node:fs/promises'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import fontkit from '@pdf-lib/fontkit'
+import { fileURLToPath } from 'node:url'
 
 async function extractedText(data: Uint8Array) {
-  const loading = getDocument({ data: new Uint8Array(data) }), pdf = await loading.promise
+  const loading = getDocument({ data: new Uint8Array(data), standardFontDataUrl: fileURLToPath(new URL('../node_modules/pdfjs-dist/standard_fonts/', import.meta.url)).replaceAll('\\', '/') }), pdf = await loading.promise
   try { const content = await (await pdf.getPage(1)).getTextContent(); return content.items.map(item => 'str' in item ? item.str : '').join(' ') }
   finally { await loading.destroy() }
 }
@@ -174,4 +176,67 @@ test('Text in einer eingebetteten PDF-Seite ersetzen und weiteren Text löschen'
   const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
   const content = await extractedText(await readFile((await (await downloaded).path())!))
   expect(content).toContain('Formulartext ersetzt'); expect(content).not.toContain('Text im Formularobjekt'); expect(content).not.toContain('Diese Zeile entfernen')
+})
+
+test('Live-Vorschau beim Tippen: deutsche Zeichen bei einer eingebetteten Teilschrift und Download ohne Übernehmen', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
+  const doc = await PDFDocument.create(); doc.registerFontkit(fontkit)
+  const font = await doc.embedFont(await readFile(new URL('../public/fonts/NotoSans-Regular.ttf', import.meta.url)), { subset: true })
+  const p = doc.addPage([500, 600]); p.drawText('Ausgangstext', { x: 60, y: 460, size: 18, font })
+  await page.goto('/')
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'Teilschrift.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await doc.save()) })
+  await page.getByRole('button', { name: 'Text bearbeiten: Ausgangstext', exact: true }).click()
+  const field = page.getByRole('textbox', { name: 'Vorhandener Text', exact: true })
+  await field.fill('Erster Entwurf')
+  await field.fill('Zweiter Entwurf')
+  const german = 'Grüße aus München – ÄÖÜ äöü ß ẞ'
+  await field.fill(german.normalize('NFD'))
+  await expect(field).toBeFocused()
+  await expect(page.getByRole('status', { name: 'Live-Vorschau aktuell' })).toBeVisible({ timeout: 20000 })
+  await expect(page.locator('.pdf-surface canvas')).toHaveAttribute('aria-label', `PDF-Vorschau: ${german}`, { timeout: 20000 })
+  await expect(page.getByRole('button', { name: 'Übernehmen', exact: true })).toBeEnabled()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await page.screenshot({ path: 'test-results/live-german.png', fullPage: true })
+  // No Apply click: the latest live draft must still be included in the PDF.
+  const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
+  const text = await extractedText(await readFile((await (await downloaded).path())!))
+  expect(text).toContain(german); expect(text).not.toContain('Ausgangstext'); expect(text).not.toContain('Erster Entwurf')
+  expect(errors).toEqual([])
+})
+
+test('Live-Vorschau verwerfen und bestätigten Text wiederherstellen', async ({ page }) => {
+  const doc = await PDFDocument.create(), p = doc.addPage([500, 600])
+  p.drawText('Alter Text', { x: 60, y: 460, size: 18 })
+  await page.goto('/')
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'Abbrechen.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await doc.save()) })
+  await page.getByRole('button', { name: 'Text bearbeiten: Alter Text', exact: true }).click()
+  const field = page.getByRole('textbox', { name: 'Vorhandener Text', exact: true })
+  await field.fill('Bestätigte Änderung')
+  await page.getByRole('button', { name: 'Übernehmen', exact: true }).click()
+  await expect(page.locator('.pdf-surface canvas')).toHaveAttribute('aria-label', 'PDF-Vorschau: Bestätigte Änderung', { timeout: 20000 })
+  await page.getByRole('button', { name: 'Text bearbeiten: Bestätigte Änderung', exact: true }).click()
+  await field.fill('Nicht speichern')
+  await expect(page.locator('.pdf-surface canvas')).toHaveAttribute('aria-label', 'PDF-Vorschau: Nicht speichern', { timeout: 20000 })
+  await page.locator('.native-edit-form').getByRole('button', { name: 'Abbrechen', exact: true }).click()
+  await expect(page.locator('.pdf-surface canvas')).toHaveAttribute('aria-label', 'PDF-Vorschau: Bestätigte Änderung', { timeout: 20000 })
+  await page.getByRole('button', { name: 'Rückgängig', exact: true }).click()
+  await expect(page.locator('.pdf-surface canvas')).toHaveAttribute('aria-label', 'PDF-Vorschau: Alter Text', { timeout: 20000 })
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('Neuer Text erscheint ohne Fokuswechsel und exportiert Umlaute und Eszett als suchbaren Text', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: /Testdokument laden/ }).click()
+  await page.getByRole('button', { name: 'Text hinzufügen', exact: true }).click()
+  await page.locator('.pdf-surface').click({ position: { x: 65, y: 340 } })
+  const field = page.getByRole('textbox', { name: 'Dein Text', exact: true })
+  const german = 'München, Straße, Füße: äöü ÄÖÜ ß ẞ'
+  await field.fill(german.normalize('NFD'))
+  await expect(field).toBeFocused()
+  await expect(page.locator('.annotation-layer text')).toHaveText(german.normalize('NFD'))
+  await expect.poll(() => page.evaluate(() => document.fonts.check('18px "Noto Sans PDF"'))).toBeTruthy()
+  const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Herunterladen' }).click()
+  const data = await readFile((await (await downloaded).path())!), text = await extractedText(data)
+  expect(text).toContain(german)
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })

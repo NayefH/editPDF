@@ -6,6 +6,7 @@ import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { NativeText, TextEdit, PageTextEdits } from './native-pdf'
+import { embedTextFont } from './text-font'
 import './App.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
@@ -27,12 +28,14 @@ const tools = [
 const colors = ['#111111', '#bcff00', '#00bcff', '#00b980', '#f0bf00', '#ff4b8b']
 const uid = () => crypto.randomUUID()
 
-function PDFCanvas({ pdf, page, width }: { pdf: PDFDocumentProxy; page: number; width: number }) {
+function PDFCanvas({ pdf, page, width, describe = false }: { pdf: PDFDocumentProxy; page: number; width: number; describe?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState(false)
+  const [renderedText, setRenderedText] = useState('')
   useEffect(() => {
     let cancelled = false
     let render: ReturnType<pdfjs.PDFPageProxy['render']> | undefined
+    setError(false); setRenderedText('')
     void pdf.getPage(page + 1).then(async p => {
       if (cancelled || !canvasRef.current) return
       const base = p.getViewport({ scale: 1 })
@@ -43,10 +46,14 @@ function PDFCanvas({ pdf, page, width }: { pdf: PDFDocumentProxy; page: number; 
       canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`
       render = p.render({ canvas, viewport, transform: [ratio, 0, 0, ratio, 0, 0] })
       await render.promise
+      if (describe && !cancelled) {
+        const content = await p.getTextContent()
+        if (!cancelled) setRenderedText(content.items.map(item => 'str' in item ? item.str : '').join(' '))
+      }
     }).catch((e: Error) => { if (!cancelled && e.name !== 'RenderingCancelledException') setError(true) })
     return () => { cancelled = true; render?.cancel() }
-  }, [pdf, page, width])
-  return error ? <span className="render-error">Vorschau nicht verfügbar</span> : <canvas ref={canvasRef} />
+  }, [pdf, page, width, describe])
+  return <><canvas ref={canvasRef} role={describe ? 'img' : undefined} aria-label={describe ? `PDF-Vorschau: ${renderedText}` : undefined} />{error && <span className="render-error">Vorschau nicht verfügbar</span>}</>
 }
 
 function App() {
@@ -76,6 +83,9 @@ function App() {
   const [nativeTexts, setNativeTexts] = useState<TextBox[]>([])
   const [nativeLoading, setNativeLoading] = useState(false)
   const [nativeForm, setNativeForm] = useState<TextEdit | null>(null)
+  const [markTextDraft, setMarkTextDraft] = useState<{ id: string; text: string } | null>(null)
+  const [previewUpdating, setPreviewUpdating] = useState(false)
+  const [previewVersion, setPreviewVersion] = useState('')
   const [previewPdf, setPreviewPdf] = useState<PDFDocumentProxy | null>(null)
   const nativeCache = useRef(new Map<number, NativeText[]>())
   const previewRef = useRef<PDFDocumentProxy | null>(null)
@@ -89,10 +99,19 @@ function App() {
   const current = pages[activePage]
   const selectedMark = current?.marks.find(m => m.id === selected)
   const activeTool = tools.find(t => t.id === tool)!
-  const edited = history.length > 0
+  const originalNative = nativeForm && nativeTexts.find(t => t.id === nativeForm.id)
+  const savedNative = nativeForm && (current?.replacements[nativeForm.id] ?? originalNative)
+  const nativeDirty = !!(nativeForm && savedNative && (nativeForm.text !== savedNative.text || nativeForm.color !== savedNative.color || nativeForm.size !== savedNative.size))
+  const markDirty = !!(markTextDraft && selectedMark?.id === markTextDraft.id && markTextDraft.text !== selectedMark.text)
+  const edited = history.length > 0 || nativeDirty || markDirty
+  const livePages = pages.map((p, i) => i === activePage ? {
+    ...p,
+    replacements: nativeForm && nativeDirty ? { ...p.replacements, [nativeForm.id]: nativeForm } : p.replacements,
+    marks: markDirty ? p.marks.map(m => m.id === markTextDraft!.id ? { ...m, text: markTextDraft!.text } : m) : p.marks,
+  } : p)
   const displayWidth = pageDims.width * zoom / 100
   const displayHeight = pageDims.height * zoom / 100
-  const textEdits: PageTextEdits[] = pages.filter(p => Object.keys(p.replacements).length).map(p => ({ source: p.source, edits: Object.values(p.replacements) }))
+  const textEdits: PageTextEdits[] = livePages.filter(p => Object.keys(p.replacements).length).map(p => ({ source: p.source, edits: Object.values(p.replacements) }))
   const textEditsKey = JSON.stringify(textEdits)
   const viewPdf = previewPdf ?? pdf
 
@@ -103,7 +122,7 @@ function App() {
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [edited])
   useEffect(() => () => { void pdfRef.current?.loadingTask.destroy(); void previewRef.current?.loadingTask.destroy() }, [])
-  useEffect(() => { setSelected(null); setNativeForm(null); setDraft(null); draftRef.current = null; gesture.current = null }, [activePage])
+  useEffect(() => { setSelected(null); setNativeForm(null); setMarkTextDraft(null); setDraft(null); draftRef.current = null; gesture.current = null }, [activePage])
   useEffect(() => {
     if (!pdf || !current) return
     let cancelled = false
@@ -134,25 +153,30 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
+    let loadingTask: pdfjs.PDFDocumentLoadingTask | undefined
     const edits = JSON.parse(textEditsKey) as PageTextEdits[]
     if (!bytes || !edits.length) {
       setPreviewPdf(null); void previewRef.current?.loadingTask.destroy(); previewRef.current = null
+      setPreviewUpdating(false); setPreviewVersion(textEditsKey)
       return
     }
-    setBusy('Text wird geändert …')
-    void (async () => {
+    setPreviewUpdating(true)
+    const timer = setTimeout(() => { void (async () => {
       const { replacePdfTexts } = await import('./native-pdf')
       const data = await replacePdfTexts(bytes, edits)
       if (cancelled) return
-      const loaded = await pdfjs.getDocument({ data: data.slice(), cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' }).promise
+      loadingTask = pdfjs.getDocument({ data: data.slice(), cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' })
+      const loaded = await loadingTask.promise
       if (cancelled) { void loaded.loadingTask.destroy(); return }
       const old = previewRef.current; previewRef.current = loaded; setPreviewPdf(loaded); void old?.loadingTask.destroy()
-    })().catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Text konnte nicht ersetzt werden.') }).finally(() => { if (!cancelled) setBusy('') })
-    return () => { cancelled = true }
+      setPreviewVersion(textEditsKey)
+    })().catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Vorschau konnte nicht aktualisiert werden.') }).finally(() => { if (!cancelled) setPreviewUpdating(false) }) }, 300)
+    return () => { cancelled = true; clearTimeout(timer); if (loadingTask && previewRef.current?.loadingTask !== loadingTask) void loadingTask.destroy() }
   }, [bytes, textEditsKey])
 
   function commit(next: Snapshot) { setHistory(h => [...h.slice(-39), pages]); setFuture([]); setPages(next) }
   function undo() {
+    if (nativeDirty || markDirty) { setNativeForm(null); setMarkTextDraft(null); return }
     if (!history.length) return
     setFuture(f => [pages, ...f]); setPages(history[history.length - 1]!); setHistory(h => h.slice(0, -1)); setSelected(null); setNativeForm(null)
     setActivePage(p => Math.min(p, history[history.length - 1]!.length - 1))
@@ -161,8 +185,12 @@ function App() {
   function applyNativeText(replacement = nativeForm) {
     if (!replacement) return
     setError('')
-    commit(pages.map((p, i) => i === activePage ? { ...p, replacements: { ...p.replacements, [replacement.id]: { ...replacement } } } : p))
+    if (nativeDirty || replacement.text === '') commit(pages.map((p, i) => i === activePage ? { ...p, replacements: { ...p.replacements, [replacement.id]: { ...replacement } } } : p))
     setNativeForm(null)
+  }
+  function finishMarkText() {
+    if (markTextDraft && markDirty) updateMark(markTextDraft.id, { text: markTextDraft.text })
+    setMarkTextDraft(null)
   }
   function updateMark(id: string, patch: Partial<Mark>) { commit(pages.map((p, i) => i === activePage ? { ...p, marks: p.marks.map(m => m.id === id ? { ...m, ...patch } : m) } : p)) }
   function removeMark() { if (!selected) return; commit(pages.map((p, i) => i === activePage ? { ...p, marks: p.marks.filter(m => m.id !== selected) } : p)); setSelected(null) }
@@ -180,7 +208,7 @@ function App() {
       const first = await loaded.getPage(1); const viewport = first.getViewport({ scale: 1 })
       void pdf?.loadingTask.destroy()
       setPdf(loaded); setBytes(data); setFileName(file.name); setFileSize(file.size)
-      nativeCache.current.clear(); setNativeForm(null); setNativeTexts([])
+      nativeCache.current.clear(); setNativeForm(null); setNativeTexts([]); setMarkTextDraft(null)
       setPages(Array.from({ length: loaded.numPages }, (_, i) => ({ id: uid(), source: i, marks: [], replacements: {} })))
       setPageDims({ width: viewport.width, height: viewport.height }); setActivePage(0); setHistory([]); setFuture([]); setSelected(null)
       setZoom(window.innerWidth < 700 ? Math.max(25, Math.floor((window.innerWidth - 80) / viewport.width * 100)) : 85)
@@ -263,27 +291,55 @@ function App() {
       const { replacePdfTexts } = await import('./native-pdf')
       const editedBytes = await replacePdfTexts(bytes, textEdits)
       const source = await PDFDocument.load(editedBytes), output = await PDFDocument.create()
-      for (const state of pages) {
+      const textFont = livePages.some(p => p.marks.some(m => m.type === 'text')) ? await embedTextFont(output) : null
+      const textCharacters = new Set(textFont?.getCharacterSet() ?? [])
+      for (const state of livePages) {
         const [copy] = await output.copyPages(source, [state.source]); output.addPage(copy!)
         if (!state.marks.length) continue
         const original = await pdf.getPage(state.source + 1), viewport = original.getViewport({ scale: 1 })
         const canvas = document.createElement('canvas'), factor = 2
         canvas.width = Math.ceil(viewport.width * factor); canvas.height = Math.ceil(viewport.height * factor)
         const ctx = canvas.getContext('2d')!; ctx.scale(factor, factor)
+        let hasOverlay = false
+        const flushOverlay = async () => {
+          if (!hasOverlay) return
+          const overlay = await output.embedPng(canvas.toDataURL('image/png')), [x, y] = viewport.convertToPdfPoint(0, viewport.height)
+          copy!.drawImage(overlay, { x, y, width: viewport.width, height: viewport.height, rotate: degrees(original.rotate) })
+          ctx.clearRect(0, 0, viewport.width, viewport.height); hasOverlay = false
+        }
         for (const mark of state.marks) {
           const x = mark.x * viewport.width, y = mark.y * viewport.height, w = mark.w * viewport.width, h = mark.h * viewport.height
+          if (mark.type === 'text' && textFont) {
+            await flushOverlay()
+            const channels = mark.color.match(/[a-f\d]{2}/gi)!.map(hex => parseInt(hex, 16) / 255)
+            const ascent = textFont.heightAtSize(mark.size, { descender: false })
+            const lines = (mark.text ?? '').normalize('NFC').split(/\r?\n/)
+            for (let index = 0; index < lines.length; index++) {
+              const line = lines[index]!, baseline = y + ascent + index * mark.size * 1.3
+              if (![...line].every(char => textCharacters.has(char.codePointAt(0)!))) {
+                // Keep symbols outside Noto Sans visible through the browser's font fallback.
+                await document.fonts.load(`${mark.size}px "Noto Sans PDF"`)
+                ctx.save(); ctx.font = `${mark.size}px "Noto Sans PDF", Arial, sans-serif`; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = mark.color; ctx.fillText(line, x, baseline); ctx.restore()
+                hasOverlay = true
+                continue
+              }
+              await flushOverlay()
+              const [tx, ty] = viewport.convertToPdfPoint(x, baseline)
+              copy!.drawText(line, { x: tx, y: ty, size: mark.size, font: textFont, color: rgb(channels[0]!, channels[1]!, channels[2]!), rotate: degrees(original.rotate) })
+            }
+            continue
+          }
+          hasOverlay = true
           ctx.save(); ctx.fillStyle = mark.color; ctx.strokeStyle = mark.color; ctx.lineWidth = mark.type === 'draw' ? Math.max(1, mark.size / 6) : 1.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
-          if (mark.type === 'text') { ctx.font = `${mark.size}px Arial, sans-serif`; ctx.textBaseline = 'top'; (mark.text ?? '').split('\n').forEach((line, index) => ctx.fillText(line, x, y + index * mark.size * 1.3)) }
           if (mark.type === 'highlight') { ctx.globalAlpha = .3; ctx.fillRect(x, y, w, h) }
           if (mark.type === 'rectangle') ctx.strokeRect(x, y, w, h)
           if (mark.type === 'draw' && mark.points) { ctx.beginPath(); mark.points.forEach((p, i) => { if (!i) ctx.moveTo(p.x * viewport.width, p.y * viewport.height); else ctx.lineTo(p.x * viewport.width, p.y * viewport.height) }); ctx.stroke() }
           if (mark.type === 'image' && mark.image) { const img = new Image(); img.src = mark.image; await img.decode(); ctx.drawImage(img, x, y, w, h) }
           ctx.restore()
         }
-        const overlay = await output.embedPng(canvas.toDataURL('image/png')), [x, y] = viewport.convertToPdfPoint(0, viewport.height)
-        copy!.drawImage(overlay, { x, y, width: viewport.width, height: viewport.height, rotate: degrees(original.rotate) })
+        await flushOverlay()
       }
-      output.setTitle(fileName.replace(/\.pdf$/i, '')); output.setCreator('EDIT//PDF')
+      output.setTitle(fileName.replace(/\.pdf$/i, '')); output.setCreator('EDIT//PDF'); output.setLanguage('de-DE')
       const result = await output.save(), url = URL.createObjectURL(new Blob([result as BlobPart], { type: 'application/pdf' }))
       const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName.replace(/\.pdf$/i, '') + '-bearbeitet.pdf'; anchor.click()
       setTimeout(() => URL.revokeObjectURL(url), 10000); setNotice('Fertig! Deine bearbeitete PDF wurde heruntergeladen.')
@@ -291,7 +347,7 @@ function App() {
   }
   function movePage(direction: number) { const target = activePage + direction; if (target < 0 || target >= pages.length) return; const next = [...pages]; [next[activePage], next[target]] = [next[target]!, next[activePage]!]; commit(next); setActivePage(target) }
   function chooseTool(next: Tool) { setTool(next); setSelected(null); setNativeForm(null); if (next === 'highlight') setColor('#bcff00'); if (next === 'image' && pdf) imageRef.current?.click() }
-  const marks = [...(current?.marks.filter(m => m.id !== draft?.id) ?? []), ...(draft ? [draft] : [])]
+  const marks = [...(livePages[activePage]?.marks.filter(m => m.id !== draft?.id) ?? []), ...(draft ? [draft] : [])]
 
   return <div className="app-shell">
     <input ref={fileRef} type="file" accept="application/pdf,.pdf" hidden onChange={e => { const file = e.target.files?.[0]; if (file) void loadFile(file) }} />
@@ -306,20 +362,20 @@ function App() {
           <div className="document-name"><span className="file-icon"><FileText size={18} /></span><div><strong>{fileName || 'Keine PDF geöffnet'}</strong>{pdf && <span>{pages.length} {pages.length === 1 ? 'Seite' : 'Seiten'} · {(fileSize / 1024 / 1024).toFixed(2).replace('.', ',')} MB</span>}</div></div>
           <div className="document-actions"><button className="button button-secondary" aria-label={pdf ? 'PDF wechseln' : 'PDF öffnen'} onClick={() => fileRef.current?.click()} disabled={!!busy}><Upload size={15} /><span>{pdf ? 'PDF wechseln' : 'PDF öffnen'}</span></button><button className="button button-primary download-button" onClick={() => void download()} disabled={!pdf || !!busy}><ArrowDownToLine size={16} /><span>Herunterladen</span></button></div>
         </div>
-        <div className="editor-toolbar"><div className="tool-group">{tools.map(t => <button key={t.id} title={t.name} className={`tool-button ${tool === t.id ? 'active' : ''}`} aria-label={t.name} aria-pressed={tool === t.id} onClick={() => chooseTool(t.id)} disabled={!!busy}><t.icon size={18} strokeWidth={1.7} /><span>{t.name}</span></button>)}</div><div className="history-buttons"><button title="Rückgängig" aria-label="Rückgängig" onClick={undo} disabled={!history.length || !!busy}><Undo2 size={18} /></button><button title="Wiederholen" aria-label="Wiederholen" onClick={redo} disabled={!future.length || !!busy}><Redo2 size={18} /></button></div></div>
+        <div className="editor-toolbar"><div className="tool-group">{tools.map(t => <button key={t.id} title={t.name} className={`tool-button ${tool === t.id ? 'active' : ''}`} aria-label={t.name} aria-pressed={tool === t.id} onClick={() => chooseTool(t.id)} disabled={!!busy}><t.icon size={18} strokeWidth={1.7} /><span>{t.name}</span></button>)}</div><div className="history-buttons"><button title="Rückgängig" aria-label="Rückgängig" onClick={undo} disabled={(!history.length && !nativeDirty && !markDirty) || !!busy}><Undo2 size={18} /></button><button title="Wiederholen" aria-label="Wiederholen" onClick={redo} disabled={!future.length || nativeDirty || markDirty || !!busy}><Redo2 size={18} /></button></div></div>
         <div className="editor-body">
           {pdf && <aside className="pages-sidebar"><div className="sidebar-title"><LayoutGrid size={14} /> Seiten <span>{pages.length}</span></div><div className="thumbnails">{pages.map((p, i) => <button className={`thumbnail ${activePage === i ? 'selected' : ''}`} key={p.id} onClick={() => setActivePage(i)} aria-label={`Seite ${i + 1}`} disabled={!!busy}><div><PDFCanvas pdf={viewPdf!} page={p.source} width={100} />{(p.marks.length > 0 || Object.keys(p.replacements).length > 0) && <span className="edited-dot" />}</div><span>{i + 1}</span></button>)}</div><div className="page-actions"><button title="Seite nach vorne" aria-label="Seite nach vorne" onClick={() => movePage(-1)} disabled={activePage === 0 || !!busy}><ArrowUp size={16} /></button><button title="Seite nach hinten" aria-label="Seite nach hinten" onClick={() => movePage(1)} disabled={activePage === pages.length - 1 || !!busy}><ArrowDown size={16} /></button><button title="Seite löschen" aria-label="Seite löschen" disabled={pages.length <= 1 || !!busy} onClick={() => { commit(pages.filter((_, i) => i !== activePage)); setActivePage(Math.max(0, activePage - 1)) }}><Trash2 size={15} /></button></div></aside>}
           <div className={`workspace ${dragOver ? 'dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!busy) setDragOver(true) }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }} onDrop={e => { e.preventDefault(); setDragOver(false); const file = e.dataTransfer.files[0]; if (file && !busy) void loadFile(file) }}>
             {!pdf ? <div className="upload-view"><div className="upload-zone"><FileText className="upload-file-icon" size={45} strokeWidth={1} /><h1>PDF öffnen</h1><p>Datei hier ablegen</p><button className="button button-primary upload-button" disabled={!!busy} onClick={() => fileRef.current?.click()}><Plus size={18} /> PDF auswählen <ArrowUpRight size={16} /></button><span className="upload-limit">Max. 50 MB</span></div><button className="demo-button" disabled={!!busy} onClick={() => void loadDemo()}><FileText size={14} />Testdokument laden</button></div> : <div className="page-scroll">
-              <div className="page-label"><button aria-label="Vorherige Seite" disabled={activePage === 0 || !!busy} onClick={() => setActivePage(p => p - 1)}>‹</button> SEITE {activePage + 1} <span>/{pages.length}</span> <button aria-label="Nächste Seite" disabled={activePage === pages.length - 1 || !!busy} onClick={() => setActivePage(p => p + 1)}>›</button></div>
-              <div className={`pdf-surface cursor-${tool}`} ref={surfaceRef} style={{ width: displayWidth, height: displayHeight }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { gesture.current = null; setLive(null) }}>
-                <PDFCanvas pdf={viewPdf!} page={current!.source} width={displayWidth} />
+              <div className="preview-heading"><span className="live-indicator" role="status" aria-label={previewUpdating ? "Vorschau wird aktualisiert" : "Live-Vorschau aktuell"}>{previewUpdating ? <LoaderCircle size={12} className="spin" /> : <span />}Live-Vorschau</span><div className="page-label"><button aria-label="Vorherige Seite" disabled={activePage === 0 || !!busy} onClick={() => setActivePage(p => p - 1)}>‹</button> SEITE {activePage + 1} <span>/{pages.length}</span> <button aria-label="Nächste Seite" disabled={activePage === pages.length - 1 || !!busy} onClick={() => setActivePage(p => p + 1)}>›</button></div></div>
+              <div className={`pdf-surface cursor-${tool}`} ref={surfaceRef} data-preview-version={previewVersion} aria-busy={previewUpdating} style={{ width: displayWidth, height: displayHeight }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { gesture.current = null; setLive(null) }}>
+                <PDFCanvas pdf={viewPdf!} page={current!.source} width={displayWidth} describe />
                 <svg className="annotation-layer" viewBox={`0 0 ${pageDims.width} ${pageDims.height}`} aria-label="PDF-Bearbeitungen">
                   {(tool === 'edit' || tool === 'select') && nativeTexts.filter(t => current!.replacements[t.id]?.text !== '').map(t => <rect key={`native-${t.id}`} className={`existing-text-box ${nativeForm?.id === t.id ? 'is-selected' : ''}`} x={t.x - 2} y={t.y - 2} width={Math.max(4, t.w + 4)} height={Math.max(8, t.h + 4)} fill="transparent" role="button" tabIndex={0} aria-label={`Text bearbeiten: ${current!.replacements[t.id]?.text ?? t.text}`} onPointerDown={e => { e.stopPropagation(); setSelected(null); setNativeForm(current!.replacements[t.id] ?? { id: t.id, text: t.text, size: t.size, color: t.color }) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(null); setNativeForm(current!.replacements[t.id] ?? { id: t.id, text: t.text, size: t.size, color: t.color }) } }} />)}
                   {marks.map(m => {
                     const x = m.x * pageDims.width, y = m.y * pageDims.height, w = m.w * pageDims.width, h = m.h * pageDims.height
                     const common = { onPointerDown: (e: ReactPointerEvent<SVGElement>) => selectMark(e, m), style: { pointerEvents: tool === 'select' ? 'auto' as const : 'none' as const, cursor: 'move' } }
-                    return <g key={m.id}>{m.type === 'text' && <text {...common} x={x} y={y} fill={m.color} fontSize={m.size} fontFamily="Arial, sans-serif" dominantBaseline="text-before-edge">{(m.text ?? '').split('\n').map((line, i) => <tspan key={i} x={x} dy={i ? m.size * 1.3 : 0}>{line || ' '}</tspan>)}</text>}{m.type === 'highlight' && <rect {...common} x={x} y={y} width={w} height={h} fill={m.color} fillOpacity={.3} />}{m.type === 'rectangle' && <rect {...common} x={x} y={y} width={w} height={h} fill="transparent" stroke={m.color} strokeWidth={1.5} />}{m.type === 'draw' && <polyline {...common} points={m.points?.map(p => `${p.x * pageDims.width},${p.y * pageDims.height}`).join(' ')} fill="none" stroke={m.color} strokeWidth={Math.max(1, m.size / 6)} strokeLinecap="round" strokeLinejoin="round" />}{m.type === 'image' && <image {...common} x={x} y={y} width={w} height={h} href={m.image} preserveAspectRatio="none" />}{selected === m.id && m.type !== 'draw' && <rect x={x - 3} y={y - 3} width={m.type === 'text' ? Math.max(...(m.text ?? '').split('\n').map(l => l.length), 3) * m.size * .58 + 6 : w + 6} height={m.type === 'text' ? (m.text ?? '').split('\n').length * m.size * 1.3 + 6 : h + 6} fill="none" stroke="#659000" strokeWidth={1} strokeDasharray="4 3" pointerEvents="none" />}</g>
+                    return <g key={m.id}>{m.type === 'text' && <text {...common} x={x} y={y} fill={m.color} fontSize={m.size} fontFamily="Noto Sans PDF, Arial, sans-serif" dominantBaseline="text-before-edge">{(m.text ?? '').split('\n').map((line, i) => <tspan key={i} x={x} dy={i ? m.size * 1.3 : 0}>{line || ' '}</tspan>)}</text>}{m.type === 'highlight' && <rect {...common} x={x} y={y} width={w} height={h} fill={m.color} fillOpacity={.3} />}{m.type === 'rectangle' && <rect {...common} x={x} y={y} width={w} height={h} fill="transparent" stroke={m.color} strokeWidth={1.5} />}{m.type === 'draw' && <polyline {...common} points={m.points?.map(p => `${p.x * pageDims.width},${p.y * pageDims.height}`).join(' ')} fill="none" stroke={m.color} strokeWidth={Math.max(1, m.size / 6)} strokeLinecap="round" strokeLinejoin="round" />}{m.type === 'image' && <image {...common} x={x} y={y} width={w} height={h} href={m.image} preserveAspectRatio="none" />}{selected === m.id && m.type !== 'draw' && <rect x={x - 3} y={y - 3} width={m.type === 'text' ? Math.max(...(m.text ?? '').split('\n').map(l => l.length), 3) * m.size * .58 + 6 : w + 6} height={m.type === 'text' ? (m.text ?? '').split('\n').length * m.size * 1.3 + 6 : h + 6} fill="none" stroke="#659000" strokeWidth={1} strokeDasharray="4 3" pointerEvents="none" />}</g>
                   })}
                 </svg>
               </div>
@@ -328,8 +384,8 @@ function App() {
           </div>
           <aside className="properties-sidebar"><div className="sidebar-title">Eigenschaften</div><div className="properties-content">
             <div className="property-tool"><span><activeTool.icon size={20} /></span><h3>{nativeForm ? 'Vorhandener Text' : selectedMark ? 'Element bearbeiten' : activeTool.name}</h3></div>
-            {nativeForm && <div className="native-edit-form"><label className="property-field">Vorhandener Text<textarea value={nativeForm.text} onChange={e => setNativeForm({ ...nativeForm, text: e.target.value })} rows={5} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyNativeText() } }} /></label><button className="button button-primary apply-text" disabled={!!busy} onClick={() => applyNativeText()}><Check size={15} />Übernehmen</button></div>}
-            {selectedMark?.type === 'text' && <label className="property-field">Dein Text<textarea key={`${selectedMark.id}-${selectedMark.text}`} defaultValue={selectedMark.text} onBlur={e => { if (e.target.value !== selectedMark.text) updateMark(selectedMark.id, { text: e.target.value }) }} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) e.currentTarget.blur() }} placeholder="Text" rows={3} /></label>}
+            {nativeForm && <div className="native-edit-form"><label className="property-field">Vorhandener Text<textarea value={nativeForm.text} onChange={e => { setNativeForm({ ...nativeForm, text: e.target.value }); setError('') }} rows={5} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyNativeText() } }} /></label><div className="draft-actions"><button className="button button-primary apply-text" disabled={!!busy || !nativeDirty} onClick={() => applyNativeText()}><Check size={15} />Übernehmen</button><button className="button button-secondary" disabled={!!busy} onClick={() => setNativeForm(null)}>Abbrechen</button></div></div>}
+            {selectedMark?.type === 'text' && <label className="property-field">Dein Text<textarea key={selectedMark.id} value={markTextDraft?.id === selectedMark.id ? markTextDraft.text : selectedMark.text ?? ''} onChange={e => setMarkTextDraft({ id: selectedMark.id, text: e.target.value })} onBlur={finishMarkText} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) e.currentTarget.blur() }} placeholder="Text" rows={3} /></label>}
             {(nativeForm || selectedMark?.type !== 'image') && (tool !== 'edit' || nativeForm) && <div className="property-field"><label>Farbe</label><div className="color-options">{colors.map(c => <button key={c} style={{ '--swatch': c } as CSSProperties} className={`color-swatch ${(nativeForm?.color ?? selectedMark?.color ?? color) === c ? 'chosen' : ''}`} aria-label={`Farbe ${c}`} aria-pressed={(nativeForm?.color ?? selectedMark?.color ?? color) === c} onClick={() => { if (nativeForm) setNativeForm({ ...nativeForm, color: c }); else { setColor(c); if (selectedMark) updateMark(selectedMark.id, { color: c }) } }}>{(nativeForm?.color ?? selectedMark?.color ?? color) === c && <Check size={12} />}</button>)}<label className="custom-color" title="Eigene Farbe"><Plus size={13} /><input type="color" value={nativeForm?.color ?? selectedMark?.color ?? color} aria-label="Eigene Farbe" onChange={e => { if (nativeForm) setNativeForm({ ...nativeForm, color: e.target.value }); else { setColor(e.target.value); if (selectedMark) updateMark(selectedMark.id, { color: e.target.value }) } }} /></label></div></div>}
             {(nativeForm || selectedMark?.type === 'text' || selectedMark?.type === 'draw' || tool === 'text' || tool === 'draw') && <div className="property-field"><label htmlFor="text-size">{tool === 'draw' || selectedMark?.type === 'draw' ? 'Strichstärke' : 'Schriftgröße'}</label><div className="size-control"><Type size={15} /><select id="text-size" value={nativeForm?.size ?? selectedMark?.size ?? size} onChange={e => { if (nativeForm) setNativeForm({ ...nativeForm, size: Number(e.target.value) }); else { setSize(Number(e.target.value)); if (selectedMark) updateMark(selectedMark.id, { size: Number(e.target.value) }) } }}>{[...new Set([10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, nativeForm?.size ?? selectedMark?.size ?? size])].sort((a, b) => a - b).map(n => <option key={n} value={n}>{Math.round(n * 100) / 100}</option>)}</select><span>pt</span><ChevronDown size={13} /></div></div>}
             {selectedMark?.type === 'image' && <div className="property-field"><label>Bildbreite</label><input type="range" min="5" max="90" value={selectedMark.w * 100} aria-label="Bildbreite" onChange={e => { const w = Number(e.target.value) / 100; updateMark(selectedMark.id, { w, h: selectedMark.h * w / selectedMark.w }) }} /></div>}
@@ -343,7 +399,7 @@ function App() {
     </main>
     {notice && <div className="toast" role="status"><CheckCheck size={17} />{notice}<button aria-label="Meldung schließen" onClick={() => setNotice('')}><X size={15} /></button></div>}
     {error && <div className="error-toast" role="alert"><CircleHelp size={18} /><span>{error}</span><button aria-label="Fehler schließen" onClick={() => setError('')}><X size={16} /></button></div>}
-    {help && <div className="modal-backdrop" onClick={() => setHelp(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="help-heading" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Schließen" onClick={() => setHelp(false)}><X size={20} /></button><h2 id="help-heading">Hilfe</h2><ol><li><strong>Text bearbeiten</strong><span>Vorhandenen Text anklicken, rechts ändern und mit „Übernehmen“ bestätigen. Bei gescannten PDFs ist zuvor OCR erforderlich.</span></li><li><strong>Elemente ergänzen</strong><span>Werkzeug auswählen und auf der Seite klicken oder ziehen. Eigene Elemente lassen sich mit „Auswählen“ verschieben.</span></li><li><strong>Speichern</strong><span>„Herunterladen“ speichert die bearbeitete PDF. Ohne Download gehen Änderungen beim Schließen verloren.</span></li></ol><button className="button button-primary" onClick={() => setHelp(false)}>Schließen</button></section></div>}
+    {help && <div className="modal-backdrop" onClick={() => setHelp(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="help-heading" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Schließen" onClick={() => setHelp(false)}><X size={20} /></button><h2 id="help-heading">Hilfe</h2><ol><li><strong>Text bearbeiten</strong><span>Vorhandenen Text anklicken und rechts ändern. Die Vorschau folgt beim Tippen. „Übernehmen“ bestätigt, „Abbrechen“ verwirft den Entwurf. Bei gescannten PDFs ist zuvor OCR erforderlich.</span></li><li><strong>Elemente ergänzen</strong><span>Werkzeug auswählen und auf der Seite klicken oder ziehen. Eigene Elemente lassen sich mit „Auswählen“ verschieben.</span></li><li><strong>Speichern</strong><span>„Herunterladen“ speichert die bearbeitete PDF. Ohne Download gehen Änderungen beim Schließen verloren.</span></li></ol><button className="button button-primary" onClick={() => setHelp(false)}>Schließen</button></section></div>}
     {pendingFile && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="replace-heading"><FilePlus2 size={25} /><h2 id="replace-heading">PDF wechseln?</h2><p>Nicht heruntergeladene Änderungen werden verworfen.</p><div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingFile(null)}>Abbrechen</button><button className="button button-primary" onClick={() => { const next = pendingFile; setPendingFile(null); void loadFile(next, true) }}>PDF wechseln</button></div></section></div>}
   </div>
 }

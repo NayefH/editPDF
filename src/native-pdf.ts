@@ -148,7 +148,7 @@ export async function replacePdfTexts(bytes: Uint8Array, changes: PageTextEdits[
           const { object, parent, world, topIndex } = target
           const matrix = objectMatrix(api, object), rgba = objectColor(api, object), originalFont = api.FPDFTextObj_GetFont(object)
           const fontName = scratch(api, 512, ptr => { api.FPDFFont_GetBaseFontName(originalFont, ptr, 512); return api.pdfium.UTF8ToString(ptr) })
-          const lines = edit.text.replace(/\r\n?/g, '\n').split('\n')
+          const lines = edit.text.normalize('NFC').replace(/\r\n?/g, '\n').split('\n')
           const replacements: number[] = []
           try { for (let line = 0; line < lines.length; line++) {
             const text = lines[line]!
