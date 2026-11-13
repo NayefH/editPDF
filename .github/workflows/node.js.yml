@@ -25,3 +25,10 @@ jobs:
       - name: Install test browser
         run: npx playwright install --with-deps chromium
       - run: npm test
+      - name: Upload failure details
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-details
+          path: test-results/
+          if-no-files-found: ignore

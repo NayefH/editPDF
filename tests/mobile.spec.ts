@@ -70,6 +70,13 @@ test('Werkzeuge lassen sich wischen; Dokument lässt sich mit dem Finger scrolle
   const tools = (await page.locator('.tool-group').boundingBox())!
   await swipe(page, { x: tools.x + tools.width - 15, y: tools.y + 25 }, { x: tools.x + 15, y: tools.y + 25 })
   await expect.poll(() => page.locator('.tool-group').evaluate(e => e.scrollLeft)).toBeGreaterThan(0)
+  // One swipe need not cover the whole toolbar; its distance depends on font metrics and touch inertia.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { left, end } = await page.locator('.tool-group').evaluate(e => ({ left: e.scrollLeft, end: e.scrollWidth - e.clientWidth }))
+    if (left >= end - 1) break
+    await swipe(page, { x: tools.x + tools.width - 15, y: tools.y + 25 }, { x: tools.x + 15, y: tools.y + 25 })
+    await expect.poll(() => page.locator('.tool-group').evaluate(e => e.scrollLeft)).toBeGreaterThan(left)
+  }
   await expect(page.getByRole('button', { name: 'Bild', exact: true })).toBeInViewport()
   await page.getByRole('button', { name: 'Auswählen', exact: true }).tap()
   const area = (await page.locator('.page-scroll').boundingBox())!

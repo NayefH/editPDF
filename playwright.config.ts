@@ -4,7 +4,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 45000,
-  webServer: process.env.CI ? {
+  webServer: process.env.CI && process.env.PLAYWRIGHT_SKIP_WEBSERVER !== 'true' ? {
     command: 'node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5175 --strictPort',
     url: process.env.TEST_URL || 'http://127.0.0.1:5175',
     reuseExistingServer: false,
@@ -12,6 +12,8 @@ export default defineConfig({
   use: {
     baseURL: process.env.TEST_URL || 'http://127.0.0.1:5175',
     viewport: { width: 1440, height: 1100 },
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
     launchOptions: process.platform === 'win32' ? { executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' } : {},
   },
 })

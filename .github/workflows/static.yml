@@ -58,3 +58,16 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+      - name: Verify published website
+        run: npx playwright test tests/pages.spec.ts --retries=2
+        env:
+          CI: 'true'
+          PLAYWRIGHT_SKIP_WEBSERVER: 'true'
+          TEST_URL: ${{ steps.deployment.outputs.page_url }}
+      - name: Upload failure details
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-failure-details
+          path: test-results/
+          if-no-files-found: ignore

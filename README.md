@@ -48,7 +48,7 @@ npm test -- tests/pages.spec.ts
 Remove-Item Env:VITE_BASE_PATH, Env:CI, Env:TEST_URL
 ```
 
-In CI startet Playwright den Vorschau-Server automatisch. Der Pages-Workflow prüft den Produktionsbuild vor dem Upload; die Node.js-CI führt die gesamte Testsuite auf dem Standardpfad aus.
+In CI startet Playwright den Vorschau-Server automatisch. Der Pages-Workflow prüft den Produktionsbuild vor dem Upload und anschließend die tatsächlich veröffentlichte URL einschließlich PDF-Bearbeitung und Download. Für den Live-Test verhindert `PLAYWRIGHT_SKIP_WEBSERVER=true` den Start eines lokalen Servers; zwei Wiederholungen erlauben die verzögerte Bereitstellung durch Pages. Die Node.js-CI führt die gesamte Testsuite auf dem Standardpfad aus. Bei Fehlern speichern beide Workflows Screenshots und Playwright-Traces als Actions-Artefakte.
 
 ## Tests
 
